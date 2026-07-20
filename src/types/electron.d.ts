@@ -663,6 +663,16 @@ export interface ElectronAPI {
   onDomContextReceived: (
     callback: (dom: string, meta?: DomCaptureMeta, envelope?: ContextEnvelope) => void,
   ) => () => void;
+
+  // Knowledge Base APIs
+  kbGetClientCases: () => Promise<{ success: boolean; cases: any[]; error?: string }>;
+  kbCreateClientCase: (data: { id: string; name: string; company?: string; notes?: string }) => Promise<{ success: boolean; error?: string }>;
+  kbDeleteClientCase: (id: string) => Promise<{ success: boolean; error?: string }>;
+  kbAddSource: (params: { clientCaseId: string; sourceType: string; title?: string; sourcePath?: string; content?: string }) => Promise<{ success: boolean; source?: any; error?: string }>;
+  kbListSources: (clientCaseId: string) => Promise<{ success: boolean; sources: any[]; error?: string }>;
+  kbOpenFileDialog: (filters?: any[]) => Promise<{ success: boolean; filePaths: string[]; cancelled: boolean; error?: string }>;
+  suggestSetActiveCase: (params: { clientCaseId: string | null; clientCaseName?: string; clientCaseCompany?: string }) => Promise<{ success: boolean; error?: string }>;
+  suggestGetActiveCase: () => Promise<{ success: boolean; clientCaseId: string | null; clientCaseName: string; clientCaseCompany: string }>;
 }
 
 /**

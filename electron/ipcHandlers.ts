@@ -20,6 +20,8 @@ import { ProviderStatusRegistry } from './services/ProviderStatusRegistry';
 import { SkillsManager } from './services/SkillsManager';
 import { SAFE_DOCUMENT_EXTENSIONS } from './services/SafeDocumentTextExtractor';
 import { DEFAULT_BUILTIN_SKILL_IDS, type SkillUploadPayload } from './services/skills/SkillValidator';
+import { KnowledgeBaseManager } from './rag/KnowledgeBaseManager';
+import { getActiveClientCase, setActiveClientCase } from './rag/suggest/KnowledgeBaseGate';
 
 import { TRIAL_SENTINEL_KEY, DOM_CONTEXT_MAX_CHARS } from './config/constants';
 import { AI_RESPONSE_LANGUAGES, RECOGNITION_LANGUAGES } from './config/languages';
@@ -10776,6 +10778,102 @@ export function initializeIpcHandlers(appState: AppState): void {
         return { success: true, pro: isProOrTrialActive() };
       } catch (e: any) {
         return { success: false, error: e.message };
+      }
+    });
+
+    // ==========================================
+    // Knowledge Base IPC Handlers
+    // ==========================================
+
+    safeHandle('kb:get-client-cases', async () => {
+      try {
+        return { success: true, cases: KnowledgeBaseManager.getInstance().getClientCases() };
+      } catch (e: any) {
+        return { success: false, cases: [], error: e.message };
+      }
+    });
+
+    safeHandle('kb:create-client-case', async (_, data: { id: string; name: string; company?: string; notes?: string }) => {
+      try {
+        const ok = KnowledgeBaseManager.getInstance().createClientCase(data);
+        return { success: ok };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    safeHandle('kb:delete-client-case', async (_, id: string) => {
+      try {
+        KnowledgeBaseManager.getInstance().deleteClientCase(id);
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    safeHandle('kb:add-source', async (_, params: {
+      clientCaseId: string;
+      sourceType: 'file' | 'web_page' | 'ppt' | 'youtube';
+      title?: string;
+      sourcePath?: string;
+      content?: string;
+    }) => {
+      try {
+        const kb = KnowledgeBaseManager.getInstance();
+        if (!kb.isReady()) {
+          const ragManager = appState.getRAGManager();
+          if (ragManager && ragManager.isReady()) {
+            kb.setPipeline(ragManager.getVectorStore(), ragManager.getEmbeddingPipeline());
+          }
+        }
+        return await kb.addSource(params);
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    safeHandle('kb:list-sources', async (_, clientCaseId: string) => {
+      try {
+        return { success: true, sources: KnowledgeBaseManager.getInstance().getSourcesForClient(clientCaseId) };
+      } catch (e: any) {
+        return { success: false, sources: [], error: e.message };
+      }
+    });
+
+    safeHandle('kb:open-file-dialog', async () => {
+      try {
+        const result = await dialog.showOpenDialog({
+          properties: ['openFile', 'multiSelections'],
+          filters: [
+            { name: 'Documents', extensions: ['pdf', 'txt', 'md', 'docx', 'doc', 'pptx', 'ppt', 'html', 'htm'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+        });
+        return { success: true, filePaths: result.filePaths, cancelled: result.canceled };
+      } catch (e: any) {
+        return { success: false, cancelled: false, error: e.message };
+      }
+    });
+
+    safeHandle('suggest:set-active-case', async (_, params: {
+      clientCaseId: string | null;
+      clientCaseName?: string;
+      clientCaseCompany?: string;
+    }) => {
+      try {
+        setActiveClientCase(params);
+        return { success: true };
+      } catch (e: any) {
+        return { success: false, error: e.message };
+      }
+    });
+
+    safeHandle('suggest:get-active-case', async () => {
+      try {
+        const active = getActiveClientCase();
+        return { success: true, ...active };
+      } catch (e: any) {
+        return { success: false, clientCaseId: null, clientCaseName: '', clientCaseCompany: '' };
       }
     });
   }

@@ -78,6 +78,10 @@ export class RAGManager {
         return this.embeddingPipeline;
     }
 
+    getVectorStore(): VectorStore {
+        return this.vectorStore;
+    }
+
     initializeEmbeddings(keys: { openaiKey?: string, geminiKey?: string, geminiKeys?: string[], ollamaUrl?: string, providerDataScopes?: ProviderDataScopePolicy, explicitKeyManagement?: boolean }): void {
         const initPromise = this.embeddingPipeline.initialize({
             ...keys,

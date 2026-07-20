@@ -1330,6 +1330,31 @@ export class DatabaseManager {
             this.db.pragma('user_version = 25');
         }
 
+        // Version 25 → 26: Knowledge Base — client_cases and knowledge_sources tables
+        if (version < 26) {
+            console.log('[DatabaseManager] Applying migration v25 → v26: Knowledge Base tables');
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS client_cases (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    company TEXT DEFAULT '',
+                    notes TEXT DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS knowledge_sources (
+                    id TEXT PRIMARY KEY,
+                    client_case_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    metadata_json TEXT,
+                    index_status TEXT DEFAULT 'pending',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (client_case_id) REFERENCES client_cases(id) ON DELETE CASCADE
+                );
+            `);
+            this.db.pragma('user_version = 26');
+        }
+
         console.log('[DatabaseManager] Migrations completed.');
     }
 
@@ -2648,6 +2673,84 @@ export class DatabaseManager {
             return true;
         } catch (error) {
             console.error('[DatabaseManager] Failed to clear all data:', error);
+            return false;
+        }
+    }
+
+    public getClientCases(): Array<{ id: string; name: string; company: string; notes: string; createdAt: string }> {
+        if (!this.db) return [];
+        try {
+            const rows = this.db.prepare('SELECT * FROM client_cases ORDER BY created_at DESC').all() as any[];
+            return rows.map(r => ({
+                id: r.id,
+                name: r.name,
+                company: r.company ?? '',
+                notes: r.notes ?? '',
+                createdAt: r.created_at,
+            }));
+        } catch (e) {
+            console.error('[DatabaseManager] getClientCases failed:', e);
+            return [];
+        }
+    }
+
+    public getClientCase(id: string): { id: string; name: string; company: string; notes: string; createdAt: string } | null {
+        if (!this.db) return null;
+        try {
+            const row = this.db.prepare('SELECT * FROM client_cases WHERE id = ?').get(id) as any;
+            if (!row) return null;
+            return {
+                id: row.id,
+                name: row.name,
+                company: row.company ?? '',
+                notes: row.notes ?? '',
+                createdAt: row.created_at,
+            };
+        } catch (e) {
+            console.error('[DatabaseManager] getClientCase failed:', e);
+            return null;
+        }
+    }
+
+    public createClientCase(data: { id: string; name: string; company?: string; notes?: string }): boolean {
+        if (!this.db) return false;
+        try {
+            this.db.prepare(`
+                INSERT INTO client_cases (id, name, company, notes, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            `).run(data.id, data.name, data.company ?? '', data.notes ?? '', new Date().toISOString());
+            return true;
+        } catch (e) {
+            console.error('[DatabaseManager] createClientCase failed:', e);
+            return false;
+        }
+    }
+
+    public updateClientCase(id: string, updates: { name?: string; company?: string; notes?: string }): boolean {
+        if (!this.db) return false;
+        try {
+            const sets: string[] = [];
+            const params: any[] = [];
+            if (updates.name !== undefined) { sets.push('name = ?'); params.push(updates.name); }
+            if (updates.company !== undefined) { sets.push('company = ?'); params.push(updates.company); }
+            if (updates.notes !== undefined) { sets.push('notes = ?'); params.push(updates.notes); }
+            if (sets.length === 0) return false;
+            params.push(id);
+            this.db.prepare(`UPDATE client_cases SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+            return true;
+        } catch (e) {
+            console.error('[DatabaseManager] updateClientCase failed:', e);
+            return false;
+        }
+    }
+
+    public deleteClientCase(id: string): boolean {
+        if (!this.db) return false;
+        try {
+            this.db.prepare('DELETE FROM client_cases WHERE id = ?').run(id);
+            return true;
+        } catch (e) {
+            console.error('[DatabaseManager] deleteClientCase failed:', e);
             return false;
         }
     }

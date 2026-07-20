@@ -187,6 +187,7 @@ export const STAGES: StageConfig[] = [
 export const QUIET_WINDOW_STAGE: StageConfig = {
   id: 'quiet_window',
   order: 99, // not used in static ordering
+  onceEver: true,
   isGateOnly: true, // No UI — auto-resolves once predicate is satisfied
   triggers: {},
   customPredicate: (ctx: Ctx) => {

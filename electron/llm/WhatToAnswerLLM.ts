@@ -421,6 +421,22 @@ ANSWER SHAPE: ${intentResult.answerShape}
                 }
             }
 
+            // ── KNOWLEDGE BASE CONTEXT INJECTION ──────────────────────────────
+            try {
+                const { getActiveClientCase, injectKBContext } = require('../rag/suggest/KnowledgeBaseGate');
+                const activeCase = getActiveClientCase();
+                if (activeCase.clientCaseId) {
+                    const kbQuery = answerPlan?.question?.trim() || cleanedTranscript;
+                    const kbContext = await injectKBContext(kbQuery);
+                    if (kbContext.contextBlock) {
+                        console.log(`[WhatToAnswerLLM] Injecting KB context for active case ${activeCase.clientCaseId} (${kbContext.citations.length} citations)`);
+                        modeContextBlock = (modeContextBlock ? modeContextBlock + '\n\n' : '') + kbContext.contextBlock;
+                    }
+                }
+            } catch (kbErr: any) {
+                console.warn('[WhatToAnswerLLM] Knowledge Base context injection failed:', kbErr?.message);
+            }
+
             // ── PINNED MODE INSTRUCTIONS (PI v3, W2) ──────────────────────────
             // The mode's user-authored "Real-time prompt" (customContext) must
             // apply on EVERY answer, not only when retrieval happens to score it.

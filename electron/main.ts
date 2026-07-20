@@ -907,6 +907,7 @@ console.error = (...args: any[]) => {
 };
 
 import { initializeIpcHandlers } from "./ipcHandlers"
+import { KnowledgeBaseManager } from "./rag/KnowledgeBaseManager"
 import { WindowHelper } from "./WindowHelper"
 import { SettingsWindowHelper } from "./SettingsWindowHelper"
 import { ModelSelectorWindowHelper } from "./ModelSelectorWindowHelper"
@@ -2015,6 +2016,17 @@ export class AppState {
             providerDataScopes
         });
         this.ragManager.setLLMHelper(this.processingHelper.getLLMHelper());
+
+        // Initialize Meeting Copilot Knowledge Base Manager
+        try {
+          KnowledgeBaseManager.getInstance().setPipeline(
+            this.ragManager.getVectorStore(),
+            this.ragManager.getEmbeddingPipeline()
+          );
+          console.log('[AppState] KnowledgeBaseManager pipeline initialized');
+        } catch (e) {
+          console.error('[AppState] Failed to initialize KnowledgeBaseManager:', e);
+        }
 
         // Modes reference files must use the same initialized EmbeddingPipeline as
         // the main RAG stack. A private, never-initialized pipeline marks every

@@ -5,7 +5,7 @@ import {
     X, Mic, Speaker, Monitor, Keyboard, User, LifeBuoy, LogOut, Upload,
     ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
     Camera, RotateCcw, Eye, Layout, MessageSquare, Crop,
-    ChevronDown, ChevronUp, Check, BadgeCheck, Power, Palette, Calendar, Ghost, Sun, Moon, RefreshCw, Info, Globe, FlaskConical, Terminal, Settings, Activity, ExternalLink, Trash2,
+    ChevronDown, ChevronUp, Check, BadgeCheck, Power, Palette, Calendar, Ghost, Sun, Moon, RefreshCw, Info, Globe, FlaskConical, Terminal, Settings, Activity, ExternalLink, Trash2, BookOpen,
     Sparkles, Pencil, Briefcase, Building2, Search, MapPin, CheckCircle, HelpCircle, Zap, SlidersHorizontal, PointerOff, Folder,
     Star, AlertCircle, Gift, Smartphone, Cpu, Shield
 } from 'lucide-react';
@@ -18,6 +18,7 @@ import { NativelyProSettings } from './settings/NativelyProSettings';
 import { PhoneMirrorSettings } from './settings/PhoneMirrorSettings';
 import { IntelligenceSettings } from './settings/IntelligenceSettings';
 import { SkillsSettings } from './settings/SkillsSettings';
+import { KnowledgeBaseSettings } from './settings/KnowledgeBaseSettings';
 import { LocalWhisperModelPanel } from './LocalWhisperModelPanel';
 import { NativelyLogoMark } from './NativelyLogoMark';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1481,6 +1482,12 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                         <Folder size={16} className={activeTab === 'skills' ? 'text-accent-primary' : 'text-text-secondary'} /> {t('Skills')}
                                     </button>
                                     <button
+                                        onClick={() => setActiveTab('knowledge-base')}
+                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'knowledge-base' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
+                                    >
+                                        <BookOpen size={16} className={activeTab === 'knowledge-base' ? 'text-accent-primary' : 'text-text-secondary'} /> {t('Knowledge Base')}
+                                    </button>
+                                    <button
                                         onClick={() => setActiveTab('calendar')}
                                         className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'calendar' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
                                     >
@@ -2236,6 +2243,9 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                             )}
                             {activeTab === 'skills' && (
                                 <SkillsSettings />
+                            )}
+                            {activeTab === 'knowledge-base' && (
+                                <KnowledgeBaseSettings />
                             )}
                             {activeTab === 'natively-api' && (
                                 <NativelyApiSettings initialIsSaved={hasNativelyKey} />

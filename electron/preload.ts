@@ -1688,6 +1688,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setWindowMode: (mode: 'launcher' | 'overlay', inactive?: boolean) =>
     ipcRenderer.invoke('set-window-mode', mode, inactive),
 
+  // Knowledge Base APIs
+  kbGetClientCases: () => ipcRenderer.invoke('kb:get-client-cases'),
+  kbCreateClientCase: (data: { id: string; name: string; company?: string; notes?: string }) =>
+    ipcRenderer.invoke('kb:create-client-case', data),
+  kbDeleteClientCase: (id: string) => ipcRenderer.invoke('kb:delete-client-case', id),
+  kbAddSource: (params: { clientCaseId: string; sourceType: string; title?: string; sourcePath?: string; content?: string }) =>
+    ipcRenderer.invoke('kb:add-source', params),
+  kbListSources: (clientCaseId: string) => ipcRenderer.invoke('kb:list-sources', clientCaseId),
+  kbOpenFileDialog: () => ipcRenderer.invoke('kb:open-file-dialog'),
+  suggestSetActiveCase: (params: { clientCaseId: string | null; clientCaseName?: string; clientCaseCompany?: string }) =>
+    ipcRenderer.invoke('suggest:set-active-case', params),
+  suggestGetActiveCase: () => ipcRenderer.invoke('suggest:get-active-case'),
+
   // Intelligence Mode Events
   onIntelligenceAssistUpdate: (callback: (data: { insight: string }) => void) => {
     const subscription = (_: any, data: any) => callback(data);
