@@ -483,7 +483,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                             }}
                             title="Drag to resize"
                         >
-                            <div className="w-12 h-1.5 rounded-full bg-text-tertiary/40 hover:bg-text-tertiary/70 transition-colors" />
+                            <div className="w-12 h-1.5 rounded-full bg-white/30 hover:bg-white/50 transition-colors" />
                         </div>
                         {/* Header */}
                         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
@@ -613,17 +613,17 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     {/* + Action button */}
                                     <button
                                         onClick={() => setShowActions(v => !v)}
-                                        className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-all border border-white/5 bg-bg-item-active text-text-secondary hover:bg-bg-item-hover"
+                                        className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-all border border-white/15 bg-white/5 text-white/70 hover:bg-white/15 hover:text-white"
                                         title="Add context, switch case/persona, enable web search"
                                     >
-                                        <Plus size={14} className={showActions ? 'rotate-45 transition-transform' : 'transition-transform'} />
+                                        <Plus size={14} className={showActions ? 'rotate-45 transition-transform' : 'transition-transform text-white'} />
                                     </button>
 
                                     {/* ••• More popover */}
                                     <div className="absolute left-12 top-1/2 -translate-y-1/2">
                                         <button
                                             onClick={() => setShowMore(v => !v)}
-                                            className="p-1.5 rounded-full text-text-tertiary hover:text-text-secondary hover:bg-bg-item-hover"
+                                            className="p-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/10"
                                             title="Quick actions (legacy interview presets — preserved)"
                                         >
                                             <MoreHorizontal size={14} />
@@ -633,7 +633,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                 initial={{ opacity: 0, y: -4 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 transition={{ duration: 0.12 }}
-                                                className="absolute bottom-full left-0 mb-2 w-52 bg-bg-elevated border border-border-subtle rounded-xl shadow-2xl p-1 text-[12px] z-50"
+                                                className="absolute bottom-full left-0 mb-2 w-52 bg-[#1c1c20] border border-white/15 rounded-xl shadow-2xl p-1 text-[12px] z-50"
                                             >
                                                 {[
                                                     { label: 'What to say', icon: <Pencil size={11} />, action: 'whatToSay' },
@@ -652,7 +652,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                             else if (item.action === 'followUp') window.electronAPI?.generateFollowUpQuestions?.();
                                                             else if (item.action === 'answerNow') window.electronAPI?.generateCodeHint?.();
                                                         }}
-                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-text-secondary hover:bg-bg-item-hover"
+                                                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-white/90 hover:bg-white/10"
                                                     >
                                                         {item.icon}
                                                         <span>{item.label}</span>
@@ -693,7 +693,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                     setQuery('');
                                                 }
                                             }}
-                                            className={`p-1.5 rounded-full transition-all border border-border-muted ${query.trim() ? 'bg-text-primary text-bg-primary hover:scale-105' : 'bg-bg-item-active text-text-primary hover:bg-bg-item-hover'}`}
+                                            className={`p-1.5 rounded-full transition-all border ${query.trim() ? 'bg-white text-[#1c1c1e] border-white hover:scale-105' : 'bg-white/10 text-white/40 border-white/10'}`}
                                         >
                                             <ArrowUp size={16} className="transform rotate-45" />
                                         </button>
@@ -705,16 +705,16 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                             initial={{ opacity: 0, y: 4 }}
                                             animate={{ opacity: 1, y: 0 }}
                                             transition={{ duration: 0.12 }}
-                                            className="absolute bottom-full left-0 mb-2 w-72 bg-bg-elevated border border-border-subtle rounded-xl shadow-2xl p-2 z-50"
+                                            className="absolute bottom-full left-0 mb-2 w-72 bg-[#1c1c20] border border-white/15 rounded-xl shadow-2xl p-2 z-50"
                                         >
                                             <button
                                                 onClick={() => { setShowActions(false); setShowKbPicker(true); }}
-                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-bg-item-hover text-left"
+                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-white/10 text-left"
                                             >
                                                 <BookOpen size={14} className="mt-0.5 text-indigo-400" />
                                                 <div>
                                                     <div className="text-[13px] font-medium text-white">Pick KB case</div>
-                                                    <div className="text-[11px] text-text-tertiary">{activeCase.clientCaseId ? `Active: ${activeCase.clientCaseName}` : 'Switch which client/case grounds answers'}</div>
+                                                    <div className="text-[11px] text-white/60">{activeCase.clientCaseId ? `Active: ${activeCase.clientCaseName}` : 'Switch which client/case grounds answers'}</div>
                                                 </div>
                                             </button>
                                             <button
@@ -739,12 +739,12 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                     if (res?.success) setErrorMessage(null);
                                                     else setErrorMessage(res?.error || 'Upload failed.');
                                                 }}
-                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-bg-item-hover text-left"
+                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-white/10 text-left"
                                             >
                                                 <FileText size={14} className="mt-0.5 text-blue-400" />
                                                 <div>
                                                     <div className="text-[13px] font-medium text-white">Upload file</div>
-                                                    <div className="text-[11px] text-text-tertiary">PDF, DOCX, TXT, MD, PPTX</div>
+                                                    <div className="text-[11px] text-white/60">PDF, DOCX, TXT, MD, PPTX</div>
                                                 </div>
                                             </button>
                                             <button
@@ -765,50 +765,50 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                     if (res?.success) setErrorMessage(null);
                                                     else setErrorMessage(res?.error || 'Add URL failed.');
                                                 }}
-                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-bg-item-hover text-left"
+                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-white/10 text-left"
                                             >
                                                 <Link2 size={14} className="mt-0.5 text-emerald-400" />
                                                 <div>
                                                     <div className="text-[13px] font-medium text-white">Add URL</div>
-                                                    <div className="text-[11px] text-text-tertiary">Fetch page text and index it</div>
+                                                    <div className="text-[11px] text-white/60">Fetch page text and index it</div>
                                                 </div>
                                             </button>
                                             <button
                                                 onClick={() => { setShowActions(false); setShowPersonaPicker(v => !v); }}
-                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-bg-item-hover text-left"
+                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-white/10 text-left"
                                             >
                                                 <UserCog size={14} className="mt-0.5 text-amber-400" />
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-[13px] font-medium text-white">Persona</span>
-                                                        <span className="text-[11px] text-text-tertiary">{activePersona}</span>
-                                                        <ChevronDown size={11} className={`text-text-tertiary ml-auto transition-transform ${showPersonaPicker ? 'rotate-180' : ''}`} />
+                                                        <span className="text-[11px] text-white/60">{activePersona}</span>
+                                                        <ChevronDown size={11} className={`text-white/60 ml-auto transition-transform ${showPersonaPicker ? 'rotate-180' : ''}`} />
                                                     </div>
-                                                    <div className="text-[11px] text-text-tertiary">Tone & priorities for the assistant</div>
+                                                    <div className="text-[11px] text-white/60">Tone & priorities for the assistant</div>
                                                 </div>
                                             </button>
                                             {showPersonaPicker && (
-                                                <div className="ml-6 mt-1 mb-1 space-y-0.5 border-l border-border-subtle pl-2">
+                                                <div className="ml-6 mt-1 mb-1 space-y-0.5 border-l border-white/15 pl-2">
                                                     {['Manual', 'VC Diligence', 'Lawyer — Wills', 'Sales call', 'Recruiting'].map(p => (
                                                         <button
                                                             key={p}
                                                             onClick={() => { setActivePersona(p); setShowPersonaPicker(false); }}
-                                                            className={`w-full text-left px-2 py-1 rounded text-[12px] ${activePersona === p ? 'bg-amber-500/15 text-amber-300' : 'text-text-secondary hover:bg-bg-item-hover'}`}
+                                                            className={`w-full text-left px-2 py-1 rounded text-[12px] ${activePersona === p ? 'bg-amber-500/20 text-amber-200' : 'text-white/80 hover:bg-white/10'}`}
                                                         >
                                                             {p}
                                                         </button>
                                                     ))}
                                                 </div>
                                             )}
-                                            <div className="h-px bg-border-subtle my-1" />
+                                            <div className="h-px bg-white/10 my-1" />
                                             <button
                                                 onClick={() => { setWebSearch(v => !v); setShowActions(false); }}
-                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-bg-item-hover text-left"
+                                                className="w-full flex items-start gap-2 px-2 py-2 rounded-md hover:bg-white/10 text-left"
                                             >
-                                                <Globe size={14} className={`mt-0.5 ${webSearch ? 'text-emerald-400' : 'text-text-tertiary'}`} />
+                                                <Globe size={14} className={`mt-0.5 ${webSearch ? 'text-emerald-400' : 'text-white/60'}`} />
                                                 <div>
                                                     <div className="text-[13px] font-medium text-white">Web search</div>
-                                                    <div className="text-[11px] text-text-tertiary">{webSearch ? 'Enabled — falls back when KB has no answer' : 'Disabled — KB only'}</div>
+                                                    <div className="text-[11px] text-white/60">{webSearch ? 'Enabled — falls back when KB has no answer' : 'Disabled — KB only'}</div>
                                                 </div>
                                             </button>
                                         </motion.div>
@@ -832,7 +832,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         animate={{ y: 0, opacity: 1 }}
                                         exit={{ y: 20, opacity: 0 }}
                                         onClick={(e) => e.stopPropagation()}
-                                        className="bg-bg-elevated border border-border-subtle rounded-xl p-4 w-[440px] max-h-[60vh] overflow-y-auto"
+                                        className="bg-[#1c1c20] border border-white/15 rounded-xl p-4 w-[440px] max-h-[60vh] overflow-y-auto"
                                     >
                                         <h3 className="text-sm font-semibold text-white mb-3">Pick a client case</h3>
                                         <ClientCaseSelector
