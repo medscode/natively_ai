@@ -127,7 +127,7 @@ const AssistantMessage: React.FC<{
             transition={{ duration: 0.15 }}
             className="flex flex-col items-start mb-6"
         >
-            <div className="text-text-primary text-[15px] leading-relaxed max-w-[85%]">
+            <div className="text-white text-[15px] leading-relaxed max-w-[85%]">
                 {content}
                 {citations && citations.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
@@ -136,7 +136,7 @@ const AssistantMessage: React.FC<{
                 )}
                 {isStreaming && (
                     <motion.span
-                        className="inline-block w-0.5 h-4 bg-text-secondary ml-0.5 align-middle"
+                        className="inline-block w-0.5 h-4 bg-white ml-0.5 align-middle"
                         animate={{ opacity: [1, 0] }}
                         transition={{ duration: 0.5, repeat: Infinity }}
                     />
@@ -145,9 +145,9 @@ const AssistantMessage: React.FC<{
             {!isStreaming && content && (
                 <button
                     onClick={handleCopy}
-                    className="flex items-center gap-2 mt-3 text-[13px] text-text-tertiary hover:text-text-secondary transition-colors"
+                    className="flex items-center gap-2 mt-3 text-[13px] text-white/50 hover:text-white/80 transition-colors"
                 >
-                    {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                    {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
                     {copied ? 'Copied' : 'Copy message'}
                 </button>
             )}
@@ -487,25 +487,25 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                         </div>
                         {/* Header */}
                         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
-                            <div className="flex items-center gap-2 text-text-tertiary">
-                                <Sparkles size={14} className="opacity-70" />
-                                <span className="text-[13px] font-medium">Meeting Copilot</span>
+                            <div className="flex items-center gap-2 text-white">
+                                <Sparkles size={14} className="opacity-80 text-indigo-300" />
+                                <span className="text-[13px] font-medium text-white">Meeting Copilot</span>
                             </div>
                             <button onClick={onClose} className="p-2 transition-colors group">
-                                <X size={16} className="text-text-tertiary group-hover:text-red-500 group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] transition-all duration-300" />
+                                <X size={16} className="text-white/70 group-hover:text-red-400 group-hover:drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] transition-all duration-300" />
                             </button>
                         </div>
 
                         {/* Messages area */}
                         <div className="flex-1 overflow-y-auto px-6 py-4 pb-56 custom-scrollbar">
                             {messages.length === 0 && (
-                                <div className="text-center text-text-tertiary py-12">
-                                    <Sparkles size={32} className="mx-auto mb-3 opacity-40" />
-                                    <p className="text-sm">Ask anything — your active knowledge base has the answers.</p>
+                                <div className="text-center text-white/70 py-12">
+                                    <Sparkles size={32} className="mx-auto mb-3 opacity-50 text-indigo-300" />
+                                    <p className="text-sm text-white/90">Ask anything — your active knowledge base has the answers.</p>
                                     {activeCase.clientCaseId ? (
-                                        <p className="text-xs mt-2 opacity-70">Grounded in: <span className="font-medium">{activeCase.clientCaseName}</span></p>
+                                        <p className="text-xs mt-2 text-white/60">Grounded in: <span className="font-medium text-indigo-200">{activeCase.clientCaseName}</span></p>
                                     ) : (
-                                        <p className="text-xs mt-2 opacity-70">No active case — open <span className="font-medium">+</span> below to pick one.</p>
+                                        <p className="text-xs mt-2 text-white/60">No active case — open <span className="font-medium text-white">+</span> below to pick one.</p>
                                     )}
                                 </div>
                             )}
@@ -562,23 +562,23 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                             {activeCase.clientCaseCompany && <span className="text-indigo-300/60">— {activeCase.clientCaseCompany}</span>}
                                         </div>
                                     ) : (
-                                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-text-tertiary/10 border border-border-subtle text-[11px] text-text-tertiary">
+                                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-[11px] text-white/70">
                                             <span>No active case</span>
                                         </div>
                                     )}
 
                                     {/* Manual / Suggest toggle */}
-                                    <div className="flex items-center rounded-full border border-border-subtle bg-bg-elevated overflow-hidden text-[11px]">
+                                    <div className="flex items-center rounded-full border border-white/20 bg-white/5 overflow-hidden text-[11px]">
                                         <button
                                             onClick={() => setMode('manual')}
-                                            className={`px-2.5 py-1 transition-colors ${mode === 'manual' ? 'bg-text-primary text-[#1c1c1e] font-medium' : 'text-text-tertiary hover:text-text-secondary'}`}
+                                            className={`px-2.5 py-1 transition-colors ${mode === 'manual' ? 'bg-white text-[#1c1c1e] font-medium' : 'text-white/70 hover:text-white'}`}
                                             title="Manual mode — answers only when you ask"
                                         >
                                             Manual
                                         </button>
                                         <button
                                             onClick={() => setMode('suggest')}
-                                            className={`px-2.5 py-1 transition-colors ${mode === 'suggest' ? 'bg-indigo-500 text-white font-medium' : 'text-text-tertiary hover:text-text-secondary'}`}
+                                            className={`px-2.5 py-1 transition-colors ${mode === 'suggest' ? 'bg-indigo-500 text-white font-medium' : 'text-white/70 hover:text-white'}`}
                                             title="Suggest mode — proactive suggestions based on live transcript or last chat message"
                                         >
                                             Suggest
@@ -607,7 +607,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         onChange={(e) => setQuery(e.target.value)}
                                         onKeyDown={handleInputKeyDown}
                                         placeholder={mode === 'suggest' ? 'Ask — or wait for a suggestion above' : 'Ask me anything...'}
-                                        className="w-full pl-12 pr-28 py-3 bg-bg-elevated shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-border-muted rounded-full text-sm text-text-primary placeholder-text-tertiary/70 focus:outline-none transition-all"
+                                        className="w-full pl-12 pr-28 py-3 bg-[#2a2a2e] shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white/15 rounded-full text-sm text-white placeholder-white/40 focus:outline-none focus:border-indigo-500/50 transition-all"
                                     />
 
                                     {/* + Action button */}

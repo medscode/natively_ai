@@ -264,6 +264,7 @@ export class RAGManager {
             const { getActiveClientCase } = await import('./suggest/KnowledgeBaseGate');
             caseId = getActiveClientCase().clientCaseId;
         }
+        console.log('[RAGManager.queryKB] caseId=', caseId, 'query=', query);
         if (!caseId) {
             yield { type: 'chunk', text: 'No active client case is set. Pick a client case in Settings → Knowledge Base first.' };
             yield { type: 'done' };
@@ -273,6 +274,7 @@ export class RAGManager {
         // Retrieve chunks from the KB
         const result = await kb.queryKnowledgeBase(caseId, query, { limit: options?.topK ?? 5 });
         const chunks = (result && (result as any).chunks) || [];
+        console.log('[RAGManager.queryKB] retrieved', chunks.length, 'chunks for case', caseId);
 
         if (chunks.length === 0) {
             // Fall back to web search if enabled

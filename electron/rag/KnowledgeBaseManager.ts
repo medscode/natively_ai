@@ -274,10 +274,14 @@ export class KnowledgeBaseManager {
             if (!embedding) {
                 return { chunks: [], formattedContext: '' };
             }
+            // Get the active embedding space key — without it, searchSimilar
+            // returns empty (it refuses to search across embedding spaces).
+            const spaceKey = this.embeddingPipeline.getActiveSpaceKey();
             const results = await this.vectorStore.searchSimilar(embedding, {
                 meetingId: clientCaseId,
                 limit,
                 minSimilarity,
+                spaceKey,
             });
             const formattedContext = results.map((r: any) =>
                 `[Source: ${r.title || r.meetingId || 'unknown'}] ${r.text || ''}`
