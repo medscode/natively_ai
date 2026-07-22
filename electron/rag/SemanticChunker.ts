@@ -15,9 +15,9 @@ export interface Chunk {
     tokenCount: number;
 }
 
-// Chunking parameters
+// Chunking parameters (PRD: 300–500 tokens per chunk for precise retrieval)
 const TARGET_TOKENS = 300;
-const MAX_TOKENS = 400;
+const MAX_TOKENS = 500;
 const MIN_TOKENS = 100;
 
 // Sliding window overlap: keep last N segments (~50 tokens) from previous chunk

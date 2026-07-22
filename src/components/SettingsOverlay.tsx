@@ -19,6 +19,8 @@ import { PhoneMirrorSettings } from './settings/PhoneMirrorSettings';
 import { IntelligenceSettings } from './settings/IntelligenceSettings';
 import { SkillsSettings } from './settings/SkillsSettings';
 import { KnowledgeBaseSettings } from './settings/KnowledgeBaseSettings';
+import { SuggestModeSettings } from './settings/SuggestModeSettings';
+import { WebSearchSettings } from './settings/WebSearchSettings';
 import { LocalWhisperModelPanel } from './LocalWhisperModelPanel';
 import { NativelyLogoMark } from './NativelyLogoMark';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1488,6 +1490,18 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                         <BookOpen size={16} className={activeTab === 'knowledge-base' ? 'text-accent-primary' : 'text-text-secondary'} /> {t('Knowledge Base')}
                                     </button>
                                     <button
+                                        onClick={() => setActiveTab('suggest-mode')}
+                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'suggest-mode' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
+                                    >
+                                        <Sparkles size={16} className={activeTab === 'suggest-mode' ? 'text-accent-primary' : 'text-text-secondary'} /> {t('Suggest Mode')}
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('web-search')}
+                                        className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'web-search' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
+                                    >
+                                        <Globe size={16} className={activeTab === 'web-search' ? 'text-emerald-500' : 'text-text-secondary'} /> {t('Web Search')}
+                                    </button>
+                                    <button
                                         onClick={() => setActiveTab('calendar')}
                                         className={`w-full text-left px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${activeTab === 'calendar' ? 'bg-bg-item-active text-text-primary' : 'text-text-secondary hover:text-text-primary hover:bg-bg-item-active/50'}`}
                                     >
@@ -2246,6 +2260,12 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                             )}
                             {activeTab === 'knowledge-base' && (
                                 <KnowledgeBaseSettings />
+                            )}
+                            {activeTab === 'suggest-mode' && (
+                                <SuggestModeSettings />
+                            )}
+                            {activeTab === 'web-search' && (
+                                <WebSearchSettings />
                             )}
                             {activeTab === 'natively-api' && (
                                 <NativelyApiSettings initialIsSaved={hasNativelyKey} />

@@ -1517,6 +1517,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   generateSuggestion: (context: string, lastQuestion: string) =>
     ipcRenderer.invoke('generate-suggestion', context, lastQuestion),
+  kbSuggest: (params: { question: string; transcriptContext?: string }) =>
+    ipcRenderer.invoke('kb:suggest', params),
+
+  // Meeting Copilot chat toggles
+  chatSetMode: (mode: 'manual' | 'suggest') => ipcRenderer.invoke('chat:set-mode', mode),
+  chatGetMode: () => ipcRenderer.invoke('chat:get-mode'),
+  chatExpandOverlay: () => ipcRenderer.invoke('chat:expand-overlay'),
+  chatRestoreOverlay: () => ipcRenderer.invoke('chat:restore-overlay'),
+  chatSetWebSearch: (enabled: boolean) => ipcRenderer.invoke('chat:set-web-search', enabled),
+  chatGetWebSearch: () => ipcRenderer.invoke('chat:get-web-search'),
+  chatGetTranscriptContext: () => ipcRenderer.invoke('chat:get-transcript-context'),
+  onActiveCaseChanged: (callback: (data: { clientCaseId: string | null; name: string; company: string }) => void) => {
+    const subscription = (_: any, data: any) => callback(data);
+    ipcRenderer.on('active-case-changed', subscription);
+    return () => { ipcRenderer.removeListener('active-case-changed', subscription); };
+  },
 
   getNativeAudioStatus: () => ipcRenderer.invoke('native-audio-status'),
   getInputDevices: () => ipcRenderer.invoke('get-input-devices'),
@@ -1675,6 +1691,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateMeetingSpeakerLabels: (id: string, labels: Record<string, string>) =>
     ipcRenderer.invoke('update-meeting-speaker-labels', { id, labels }),
   deleteMeeting: (id: string) => ipcRenderer.invoke('delete-meeting', id),
+  exportMeetingNotes: (meetingId: string, format: 'markdown' | 'json' | 'txt' = 'markdown') =>
+    ipcRenderer.invoke('meeting:export-notes', { meetingId, format }),
 
   onMeetingsUpdated: (callback: () => void) => {
     const subscription = () => callback();
@@ -1697,6 +1715,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('kb:add-source', params),
   kbListSources: (clientCaseId: string) => ipcRenderer.invoke('kb:list-sources', clientCaseId),
   kbOpenFileDialog: () => ipcRenderer.invoke('kb:open-file-dialog'),
+  kbAsk: (params: { question: string; clientCaseId?: string }) =>
+    ipcRenderer.invoke('kb:ask', params),
+  kbCancelAsk: (queryId: string) => ipcRenderer.invoke('kb:cancel-ask', queryId),
+  onKBStreamChunk: (callback: (data: { text: string }) => void) => {
+    const subscription = (_: any, data: any) => callback(data);
+    ipcRenderer.on('kb:stream-chunk', subscription);
+    return () => { ipcRenderer.removeListener('kb:stream-chunk', subscription); };
+  },
+  onKBStreamCitations: (callback: (data: { citations: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }> }) => void) => {
+    const subscription = (_: any, data: any) => callback(data);
+    ipcRenderer.on('kb:stream-citations', subscription);
+    return () => { ipcRenderer.removeListener('kb:stream-citations', subscription); };
+  },
+  onKBStreamComplete: (callback: () => void) => {
+    const subscription = () => callback();
+    ipcRenderer.on('kb:stream-complete', subscription);
+    return () => { ipcRenderer.removeListener('kb:stream-complete', subscription); };
+  },
+  onKBStreamError: (callback: (data: { error: string }) => void) => {
+    const subscription = (_: any, data: any) => callback(data);
+    ipcRenderer.on('kb:stream-error', subscription);
+    return () => { ipcRenderer.removeListener('kb:stream-error', subscription); };
+  },
   suggestSetActiveCase: (params: { clientCaseId: string | null; clientCaseName?: string; clientCaseCompany?: string }) =>
     ipcRenderer.invoke('suggest:set-active-case', params),
   suggestGetActiveCase: () => ipcRenderer.invoke('suggest:get-active-case'),
@@ -2308,6 +2349,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Tavily Search API
   setTavilyApiKey: (apiKey: string) => ipcRenderer.invoke('set-tavily-api-key', apiKey),
+  setWebSearchEnabled: (enabled: boolean) => ipcRenderer.invoke('web-search:set-enabled', enabled),
+  getWebSearchEnabled: () => ipcRenderer.invoke('web-search:get-enabled'),
 
   // Dynamic Model Discovery
   fetchProviderModels: (provider: 'gemini' | 'groq' | 'openai' | 'claude' | 'deepseek', apiKey: string) =>

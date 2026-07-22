@@ -423,7 +423,13 @@ ANSWER SHAPE: ${intentResult.answerShape}
 
             // ── KNOWLEDGE BASE CONTEXT INJECTION ──────────────────────────────
             try {
-                const { getActiveClientCase, injectKBContext } = require('../rag/suggest/KnowledgeBaseGate');
+                // Dynamic `import()` (not `require()`) so esbuild's deferred
+                // __esm initializer doesn't trip a ReferenceError on first
+                // call — the same bug that bit ipcHandlers.ts / main.ts
+                // before they were converted to top-level static imports.
+                // KnowledgeBaseGate is light, but only loaded on the answer
+                // path so the boot bundle stays lean.
+                const { getActiveClientCase, injectKBContext } = await import('../rag/suggest/KnowledgeBaseGate');
                 const activeCase = getActiveClientCase();
                 if (activeCase.clientCaseId) {
                     const kbQuery = answerPlan?.question?.trim() || cleanedTranscript;

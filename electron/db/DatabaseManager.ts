@@ -400,6 +400,17 @@ export class DatabaseManager {
             }
 
             this.runMigrations();
+
+            // Self-heal/Sync (2026-07-21): ensure all client cases have a parent record in meetings
+            // so chunks table foreign key constraint (FOREIGN KEY(meeting_id) REFERENCES meetings(id)) succeeds.
+            try {
+                this.db.exec(`
+                    INSERT OR IGNORE INTO meetings (id, title, created_at, source)
+                    SELECT id, name, created_at, 'kb_client_case' FROM client_cases;
+                `);
+            } catch (kbSyncErr) {
+                console.warn('[DatabaseManager] KB meeting sync failed (non-fatal):', kbSyncErr);
+            }
         } catch (error) {
             console.error('[DatabaseManager] Failed to initialize database:', error);
             throw error;
@@ -1333,6 +1344,10 @@ export class DatabaseManager {
         // Version 25 → 26: Knowledge Base — client_cases and knowledge_sources tables
         if (version < 26) {
             console.log('[DatabaseManager] Applying migration v25 → v26: Knowledge Base tables');
+            // The old `knowledge_sources` table (created by v19→v20 for OKF) has
+            // `file_id` / `mode_id` columns and is missing the new client-case-aware
+            // columns. `CREATE TABLE IF NOT EXISTS` is a no-op for an existing table,
+            // so we ALTER it in place to add the columns + create the FK.
             this.db.exec(`
                 CREATE TABLE IF NOT EXISTS client_cases (
                     id TEXT PRIMARY KEY,
@@ -1341,21 +1356,131 @@ export class DatabaseManager {
                     notes TEXT DEFAULT '',
                     created_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS knowledge_sources (
-                    id TEXT PRIMARY KEY,
-                    client_case_id TEXT NOT NULL,
-                    source_type TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    metadata_json TEXT,
-                    index_status TEXT DEFAULT 'pending',
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (client_case_id) REFERENCES client_cases(id) ON DELETE CASCADE
-                );
+            `);
+
+            // Inspect existing knowledge_sources columns; add the new ones if missing.
+            const existingCols = new Set(
+                (this.db.prepare(`PRAGMA table_info(knowledge_sources)`).all() as Array<{ name: string }>)
+                    .map((r) => r.name),
+            );
+            const alterStatements: string[] = [];
+            if (!existingCols.has('client_case_id')) {
+                alterStatements.push(`ALTER TABLE knowledge_sources ADD COLUMN client_case_id TEXT`);
+            }
+            if (!existingCols.has('source_type')) {
+                alterStatements.push(`ALTER TABLE knowledge_sources ADD COLUMN source_type TEXT NOT NULL DEFAULT 'reference_file'`);
+            }
+            if (!existingCols.has('title')) {
+                alterStatements.push(`ALTER TABLE knowledge_sources ADD COLUMN title TEXT`);
+            }
+            if (!existingCols.has('metadata_json')) {
+                alterStatements.push(`ALTER TABLE knowledge_sources ADD COLUMN metadata_json TEXT`);
+            }
+            if (!existingCols.has('index_status')) {
+                alterStatements.push(`ALTER TABLE knowledge_sources ADD COLUMN index_status TEXT DEFAULT 'pending'`);
+            }
+            for (const stmt of alterStatements) {
+                console.log('[DatabaseManager] knowledge_sources alter:', stmt);
+                try {
+                    this.db.exec(stmt);
+                } catch (e: any) {
+                    console.warn('[DatabaseManager] ALTER failed (continuing):', e?.message);
+                }
+            }
+
+            // Recreate FK index if missing (CREATE INDEX IF NOT EXISTS is harmless if it exists)
+            this.db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_knowledge_sources_client_case_id ON knowledge_sources(client_case_id);
+            `);
+
+            // Old rows from the v19→v20 OKF schema have no client_case_id and would
+            // violate the new FK. Delete them — they were not created via the KB UI
+            // and have no place in the new schema.
+            try {
+                const orphaned = this.db.prepare(`DELETE FROM knowledge_sources WHERE client_case_id IS NULL OR client_case_id = ''`).run();
+                if (orphaned.changes > 0) {
+                    console.log(`[DatabaseManager] Cleaned ${orphaned.changes} orphaned knowledge_sources rows with no client_case_id`);
+                }
+            } catch (e: any) {
+                console.warn('[DatabaseManager] Orphan cleanup failed:', e?.message);
+            }
+
+            this.db.exec(`
+                INSERT OR IGNORE INTO meetings (id, title, created_at, source)
+                SELECT id, name, created_at, 'kb_client_case' FROM client_cases;
             `);
             this.db.pragma('user_version = 26');
         }
 
         console.log('[DatabaseManager] Migrations completed.');
+
+        // SELF-HEAL: Older DBs may have a `knowledge_sources` table created by the
+        // v19→v20 OKF migration that lacks `client_case_id` / `source_type` / etc.
+        // The v25→v26 migration used `CREATE TABLE IF NOT EXISTS` which is a no-op
+        // for an existing table, so those DBs ship with a broken KB schema.
+        //
+        // Two cases:
+        //   (a) columns are missing → ALTER TABLE ADD COLUMN for each
+        //   (b) columns exist BUT the old OKF schema is still in place
+        //       (NOT NULL source_checksum, FKs to modes/mode_reference_files)
+        //       — ALTER alone cannot fix this; we must DROP+RECREATE the table.
+        // Drop+recreate is safe because the old OKF knowledge_sources data is
+        // unrelated to the new client-case KB and isn't used by anything else.
+        try {
+            const cols = new Set(
+                (this.db.prepare(`PRAGMA table_info(knowledge_sources)`).all() as Array<{ name: string }>)
+                    .map((r) => r.name),
+            );
+            const fks = this.db.prepare(`PRAGMA foreign_key_list(knowledge_sources)`).all() as Array<{ table: string }>;
+            const hasOKFSchema = cols.has('source_checksum') || cols.has('content_hash');
+            const hasClientCaseFK = fks.some((fk) => fk.table === 'client_cases');
+
+            if (cols.has('client_case_id') && cols.has('source_type') && !hasOKFSchema && hasClientCaseFK) {
+                // Schema is correct — nothing to do.
+            } else if (hasOKFSchema || !hasClientCaseFK) {
+                // Old OKF schema (or wrong FKs) — full recreate is the cleanest fix.
+                console.log('[DatabaseManager] Self-heal: dropping and recreating knowledge_sources with correct KB schema.');
+                // Save old rows only as a safety net (will likely be empty in dev).
+                let oldRows: any[] = [];
+                try {
+                    oldRows = this.db.prepare(`SELECT * FROM knowledge_sources`).all() as any[];
+                } catch { /* ignore */ }
+                this.db.exec(`DROP TABLE IF EXISTS knowledge_sources`);
+                this.db.exec(`
+                    CREATE TABLE knowledge_sources (
+                        id TEXT PRIMARY KEY,
+                        client_case_id TEXT NOT NULL,
+                        source_type TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        metadata_json TEXT,
+                        index_status TEXT DEFAULT 'pending',
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (client_case_id) REFERENCES client_cases(id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_knowledge_sources_client_case_id ON knowledge_sources(client_case_id);
+                `);
+                console.log(`[DatabaseManager] Self-heal: recreated knowledge_sources (preserved ${oldRows.length} old rows in memory; discarding since they don't fit the new schema).`);
+            } else {
+                // Columns missing — ALTER in place.
+                console.log('[DatabaseManager] Self-heal: upgrading knowledge_sources schema for KB feature.');
+                const alters: string[] = [];
+                if (!cols.has('client_case_id')) alters.push(`ALTER TABLE knowledge_sources ADD COLUMN client_case_id TEXT`);
+                if (!cols.has('source_type')) alters.push(`ALTER TABLE knowledge_sources ADD COLUMN source_type TEXT NOT NULL DEFAULT 'reference_file'`);
+                if (!cols.has('title')) alters.push(`ALTER TABLE knowledge_sources ADD COLUMN title TEXT`);
+                if (!cols.has('metadata_json')) alters.push(`ALTER TABLE knowledge_sources ADD COLUMN metadata_json TEXT`);
+                if (!cols.has('index_status')) alters.push(`ALTER TABLE knowledge_sources ADD COLUMN index_status TEXT DEFAULT 'pending'`);
+                for (const stmt of alters) {
+                    try { this.db.exec(stmt); } catch (e: any) { console.warn('[DatabaseManager] self-heal ALTER failed (continuing):', e?.message, stmt); }
+                }
+                try { this.db.exec(`CREATE INDEX IF NOT EXISTS idx_knowledge_sources_client_case_id ON knowledge_sources(client_case_id)`); } catch { /* ignore */ }
+                try {
+                    const out = this.db.prepare(`DELETE FROM knowledge_sources WHERE client_case_id IS NULL OR client_case_id = ''`).run();
+                    if (out.changes > 0) console.log(`[DatabaseManager] Self-heal: removed ${out.changes} orphaned KB rows.`);
+                } catch (e: any) { console.warn('[DatabaseManager] self-heal cleanup failed:', e?.message); }
+            }
+        } catch (e: any) {
+            console.warn('[DatabaseManager] knowledge_sources self-heal skipped:', e?.message);
+        }
     }
 
     // ============================================
@@ -2719,6 +2844,10 @@ export class DatabaseManager {
                 INSERT INTO client_cases (id, name, company, notes, created_at)
                 VALUES (?, ?, ?, ?, ?)
             `).run(data.id, data.name, data.company ?? '', data.notes ?? '', new Date().toISOString());
+            this.db.prepare(`
+                INSERT OR IGNORE INTO meetings (id, title, created_at, source)
+                VALUES (?, ?, ?, 'kb_client_case')
+            `).run(data.id, data.name, new Date().toISOString());
             return true;
         } catch (e) {
             console.error('[DatabaseManager] createClientCase failed:', e);
@@ -2748,6 +2877,7 @@ export class DatabaseManager {
         if (!this.db) return false;
         try {
             this.db.prepare('DELETE FROM client_cases WHERE id = ?').run(id);
+            this.db.prepare('DELETE FROM meetings WHERE id = ?').run(id);
             return true;
         } catch (e) {
             console.error('[DatabaseManager] deleteClientCase failed:', e);

@@ -27,3 +27,9 @@ export {
 
 export { RAGManager } from './RAGManager';
 export type { RAGManagerConfig } from './RAGManager';
+
+// Knowledge Base extractors — called from KnowledgeBaseManager.addSource()
+// when a source's sourceType is 'web_page', 'ppt', or 'youtube'. Each
+// converts its source format into plain text before chunking + embedding.
+export { extractWebPage, isWebPageUrl, extractPptSlides, extractYouTubeTranscript } from './extractors';
+export type { ExtractedContent } from './extractors/types';

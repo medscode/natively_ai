@@ -1,11 +1,14 @@
 // electron/rag/suggest/KnowledgeBaseGate.ts
 // Module-scoped active client case for KB-grounded chat and context injection.
+// Persists across Electron restarts via SettingsManager (key: `activeClientCaseId`).
 
 import { KnowledgeBaseManager } from '../KnowledgeBaseManager';
+import { SettingsManager } from '../../services/SettingsManager';
 
 let _activeClientCaseId: string | null = null;
 let _activeClientCaseName: string = '';
 let _activeClientCaseCompany: string = '';
+let _hydrated = false;
 
 export interface SuggestionCitation {
     sourceType: string;
@@ -21,14 +24,50 @@ export interface KBInjectedContext {
     kbUsed: boolean;
 }
 
+/**
+ * Hydrate the in-memory active case from SettingsManager on first call.
+ * This is called lazily from getActiveClientCase() so it works on first read.
+ */
+function ensureHydrated(): void {
+    if (_hydrated) return;
+    _hydrated = true;
+    try {
+        const settings = SettingsManager.getInstance();
+        const persistedId = settings.get('activeClientCaseId') as string | undefined;
+        if (persistedId) {
+            _activeClientCaseId = persistedId;
+            // Look up name/company from DB
+            try {
+                const db = (require('../db/DatabaseManager') as any).DatabaseManager.getInstance().getDb();
+                if (db) {
+                    const row = db.prepare(`SELECT name, company FROM client_cases WHERE id = ?`).get(persistedId) as { name: string; company: string } | undefined;
+                    if (row) {
+                        _activeClientCaseName = row.name || '';
+                        _activeClientCaseCompany = row.company || '';
+                    } else {
+                        // Case was deleted — clear the persisted id
+                        _activeClientCaseId = null;
+                        settings.set('activeClientCaseId', null);
+                    }
+                }
+            } catch { /* ignore */ }
+        }
+    } catch { /* ignore */ }
+}
+
 export function setActiveClientCase(params: {
     clientCaseId: string | null;
     clientCaseName?: string;
     clientCaseCompany?: string;
 }): void {
+    _hydrated = true;
     _activeClientCaseId = params.clientCaseId;
     _activeClientCaseName = params.clientCaseName || '';
     _activeClientCaseCompany = params.clientCaseCompany || '';
+    // Persist so the active case survives Electron restarts.
+    try {
+        SettingsManager.getInstance().set('activeClientCaseId', params.clientCaseId || null);
+    } catch { /* ignore */ }
 }
 
 export function getActiveClientCase(): {
@@ -36,6 +75,7 @@ export function getActiveClientCase(): {
     clientCaseName: string;
     clientCaseCompany: string;
 } {
+    ensureHydrated();
     return {
         clientCaseId: _activeClientCaseId,
         clientCaseName: _activeClientCaseName,

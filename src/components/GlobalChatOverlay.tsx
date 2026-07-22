@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useStreamBuffer } from '../hooks/useStreamBuffer';
-import { X, Copy, Check, Globe, ArrowUp } from 'lucide-react';
+import { X, Copy, Check, Globe, ArrowUp, BookOpen, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { genMessageId } from '../utils/messageId';
 import nativelyIcon from './icon.png';
@@ -14,6 +14,7 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     isStreaming?: boolean;
+    citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
 }
 
 interface GlobalChatOverlayProps {
@@ -63,7 +64,11 @@ const UserMessage: React.FC<{ content: string }> = ({ content }) => (
     </motion.div>
 );
 
-const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = ({ content, isStreaming }) => {
+const AssistantMessage: React.FC<{
+    content: string;
+    isStreaming?: boolean;
+    citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
+}> = ({ content, isStreaming, citations }) => {
     const [copied, setCopied] = useState(false);
 
     const handleCopy = async () => {
@@ -85,6 +90,23 @@ const AssistantMessage: React.FC<{ content: string; isStreaming?: boolean }> = (
         >
             <div className="text-text-primary text-[15px] leading-relaxed max-w-[85%]">
                 {content}
+                {citations && citations.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                        {citations.map((c) => (
+                            <span
+                                key={c.id}
+                                title={c.snippet || c.title}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium bg-blue-500/10 text-blue-500 border-blue-500/30"
+                            >
+                                <BookOpen size={10} strokeWidth={2.5} />
+                                <span className="max-w-[140px] truncate">{c.title || c.sourceType}</span>
+                                {typeof c.similarity === 'number' && (
+                                    <span className="opacity-70 font-mono text-[9px]">{c.similarity.toFixed(2)}</span>
+                                )}
+                            </span>
+                        ))}
+                    </div>
+                )}
                 {isStreaming && (
                     <motion.span
                         className="inline-block w-0.5 h-4 bg-text-secondary ml-0.5 align-middle"
@@ -201,6 +223,83 @@ const GlobalChatOverlay: React.FC<GlobalChatOverlayProps> = ({
                 isStreaming: true
             }]);
 
+            // Detect whether an active client case is set; if yes, prefer KB over meeting RAG.
+            let useKB = false;
+            try {
+                const activeResult = await window.electronAPI?.suggestGetActiveCase?.();
+                useKB = !!(activeResult?.success && activeResult.clientCaseId);
+            } catch {
+                useKB = false;
+            }
+
+            if (useKB) {
+                // KB-aware streaming: chunks + citations from active client case
+                streamBuffer.reset();
+                let citations: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }> = [];
+
+                const citationsCleanup = window.electronAPI?.onKBStreamCitations((data) => {
+                    citations = data.citations || [];
+                });
+                const tokenCleanup = window.electronAPI?.onKBStreamChunk((data: { text: string }) => {
+                    setChatState('streaming_response');
+                    streamBuffer.appendToken(data.text, (content) => {
+                        setMessages(prev => prev.map(msg =>
+                            msg.id === assistantMessageId
+                                ? { ...msg, content, citations: citations.length > 0 ? citations : msg.citations }
+                                : msg
+                        ));
+                    });
+                });
+                const doneCleanup = window.electronAPI?.onKBStreamComplete(() => {
+                    const finalContent = streamBuffer.getBufferedContent();
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === assistantMessageId
+                            ? { ...msg, content: finalContent, isStreaming: false, citations }
+                            : msg
+                    ));
+                    setChatState('idle');
+                    streamBuffer.reset();
+                    tokenCleanup?.();
+                    doneCleanup?.();
+                    errorCleanup?.();
+                    citationsCleanup?.();
+                });
+                const errorCleanup = window.electronAPI?.onKBStreamError((data: { error: string }) => {
+                    console.error('[GlobalChat] KB stream error:', data.error);
+                    setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+                    setErrorMessage(data?.error || "Couldn't get a response from the knowledge base.");
+                    setChatState('error');
+                    streamBuffer.reset();
+                    tokenCleanup?.();
+                    doneCleanup?.();
+                    errorCleanup?.();
+                    citationsCleanup?.();
+                });
+
+                const result = await window.electronAPI?.kbAsk?.({ question });
+                if (result?.fallback) {
+                    // KB pipeline not ready; fall through to meeting/global RAG below
+                    tokenCleanup?.();
+                    doneCleanup?.();
+                    errorCleanup?.();
+                    citationsCleanup?.();
+                    // Reset the message and continue with the existing global RAG path
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === assistantMessageId
+                            ? { ...msg, content: '', isStreaming: true }
+                            : msg
+                    ));
+                } else if (!result?.success) {
+                    setErrorMessage(result?.error || 'KB query failed');
+                    setChatState('error');
+                    setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+                    return;
+                } else {
+                    return; // streaming handles the rest
+                }
+            }
+
+            // Fallback: meeting/global RAG (preserves existing behavior)
             // Set up RAG streaming listeners (RAF-batched)
             streamBuffer.reset();
             const tokenCleanup = window.electronAPI?.onRAGStreamChunk((data: { chunk: string }) => {
@@ -356,7 +455,7 @@ const GlobalChatOverlay: React.FC<GlobalChatOverlayProps> = ({
                             {messages.map((msg) => (
                                 msg.role === 'user'
                                     ? <UserMessage key={msg.id} content={msg.content} />
-                                    : <AssistantMessage key={msg.id} content={msg.content} isStreaming={msg.isStreaming} />
+                                    : <AssistantMessage key={msg.id} content={msg.content} isStreaming={msg.isStreaming} citations={msg.citations} />
                             ))}
 
                             {chatState === 'waiting_for_llm' && <TypingIndicator />}
@@ -384,20 +483,43 @@ const GlobalChatOverlay: React.FC<GlobalChatOverlayProps> = ({
                                     onChange={(e) => setQuery(e.target.value)}
                                     onKeyDown={handleInputKeyDown}
                                     placeholder="Ask me anything..."
-                                    className="w-full pl-5 pr-12 py-3 bg-bg-elevated shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-border-muted rounded-full text-sm text-text-primary placeholder-text-tertiary/70 focus:outline-none transition-all"
+                                    className="w-full pl-5 pr-24 py-3 bg-bg-elevated shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-border-muted rounded-full text-sm text-text-primary placeholder-text-tertiary/70 focus:outline-none transition-all"
                                 />
-                                <button
-                                    onClick={() => {
-                                        if (query.trim()) {
-                                            submitQuestion(query);
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                    <button
+                                        onClick={async () => {
+                                            const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content;
+                                            const question = (query.trim() || lastUser || '').trim();
+                                            if (!question) {
+                                                setErrorMessage('Type a question first, then click Suggest.');
+                                                return;
+                                            }
+                                            setErrorMessage(null);
+                                            const result = await window.electronAPI?.kbSuggest?.({ question });
+                                            if (!result?.success) {
+                                                setErrorMessage(result?.error || 'KB suggestion failed. Make sure a client case is active in Settings → Knowledge Base.');
+                                                return;
+                                            }
                                             setQuery('');
-                                        }
-                                    }}
-                                    className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full transition-all duration-200 border border-white/5 ${query.trim() ? 'bg-text-primary text-bg-primary hover:scale-105' : 'bg-bg-item-active text-text-primary hover:bg-bg-item-hover'
-                                        }`}
-                                >
-                                    <ArrowUp size={16} className="transform rotate-45" />
-                                </button>
+                                        }}
+                                        title="Generate a follow-up suggestion grounded in your active knowledge base"
+                                        className="p-1.5 rounded-full transition-all duration-200 border border-white/5 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"
+                                    >
+                                        <Sparkles size={14} />
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (query.trim()) {
+                                                submitQuestion(query);
+                                                setQuery('');
+                                            }
+                                        }}
+                                        className={`p-1.5 rounded-full transition-all duration-200 border border-white/5 ${query.trim() ? 'bg-text-primary text-bg-primary hover:scale-105' : 'bg-bg-item-active text-text-primary hover:bg-bg-item-hover'
+                                            }`}
+                                    >
+                                        <ArrowUp size={16} className="transform rotate-45" />
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </motion.div>

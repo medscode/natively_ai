@@ -252,7 +252,8 @@ const SettingsPopup = () => {
                 </div>
 
 
-                {/* Groq (Fast Text) Toggle — enabled with Groq key OR Natively API key */}
+                {/* Groq (Fast Text) Toggle — legacy interview-coach, hidden in Meeting Copilot. Preserved for power users.
+                {false && (
                 <div className={`flex items-center justify-between px-2.5 py-1.5 rounded-md transition-colors duration-200 group ${!(hasStoredKey.groq || hasStoredKey.natively) ? 'opacity-50 grayscale cursor-not-allowed' : `${itemHoverClass} ${glassRowClass} cursor-default`}`} title={!(hasStoredKey.groq || hasStoredKey.natively) ? "Requires Groq or Natively API key" : ""}>
                     <div className="flex items-center gap-2.5">
                         <Zap
@@ -272,6 +273,7 @@ const SettingsPopup = () => {
                         <div className={`w-[15px] h-[15px] rounded-full transition-transform duration-300 ease-spring ${toggleKnobClass} ${useGroqFastText ? 'translate-x-[12px]' : 'translate-x-0'}`} />
                     </button>
                 </div>
+                )}
 
                 {/* Interviewer Transcript Toggle */}
                 <div className={`flex items-center justify-between px-2.5 py-1.5 rounded-md transition-colors duration-200 group cursor-default ${itemHoverClass} ${glassRowClass}`}>
@@ -296,7 +298,8 @@ const SettingsPopup = () => {
                     </button>
                 </div>
 
-                {/* Interview Mode (Brainstorm) Toggle */}
+                {/* Interview Mode (Brainstorm) Toggle — legacy, hidden in Meeting Copilot. Preserved. */}
+                {false && (
                 <div className={`flex items-center justify-between px-2.5 py-1.5 rounded-md transition-colors duration-200 group cursor-default ${itemHoverClass} ${glassRowClass}`}>
                     <div className="flex items-center gap-2.5">
                         <svg
@@ -330,6 +333,7 @@ const SettingsPopup = () => {
                         <div className={`w-[15px] h-[15px] rounded-full transition-transform duration-300 ease-spring ${toggleKnobClass} ${actionButtonMode === 'brainstorm' ? 'translate-x-[12px]' : 'translate-x-0'}`} />
                     </button>
                 </div>
+                )}
 
                 {/* Profile Mode Toggle */}
                 {hasProfile && (

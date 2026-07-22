@@ -8,7 +8,9 @@ import calender from "../UI_comp/calender.png";
 import ConnectCalendarButton from './ui/ConnectCalendarButton';
 import MeetingDetails from './MeetingDetails';
 import TopSearchPill from './TopSearchPill';
-import GlobalChatOverlay from './GlobalChatOverlay';
+// Legacy interview-coach chat overlay; preserved while analyst-style MeetingChatPanel is being validated.
+// import GlobalChatOverlay from './GlobalChatOverlay';
+import MeetingChatPanel from './MeetingChatPanel';
 import { motion, AnimatePresence, useAnimationControls } from 'framer-motion';
 import { FeatureSpotlight } from './FeatureSpotlight';
 import { analytics } from '../lib/analytics/analytics.service'; // Added analytics import
@@ -777,7 +779,11 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings, onO
                                                 <RefreshCw size={18} />
                                             </button>
 
-                                            {/* Detectable Toggle Pill */}
+                                            {/* Detectable Toggle Pill — hidden in Meeting Copilot (interview-coach surface).
+                                                Cmd+Shift+B hotkey still toggles setUndetectable via main.ts:6235.
+                                                Code preserved below for power users.
+                                            */}
+                                            {false && (
                                             <div className={`flex items-center gap-3 border rounded-full px-3 py-1.5 min-w-[140px] transition-colors ${isLight ? 'bg-bg-elevated border-border-muted shadow-sm' : 'bg-[#101011] border-border-muted'}`}>
                                                 {isDetectable ? (
                                                     <Ghost
@@ -812,6 +818,7 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings, onO
                                                      <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow-sm transition-all ${!isDetectable ? 'left-[18px]' : 'left-0.5'}`} />
                                                  </div>
                                              </div>
+                                             )}
 
                                              {/* What's New Pill */}
                                              {launchCount < 10 && (
@@ -1371,8 +1378,17 @@ const Launcher: React.FC<LauncherProps> = ({ onStartMeeting, onOpenSettings, onO
                 )}
             </AnimatePresence>
 
-            {/* Global Chat Overlay */}
-            <GlobalChatOverlay
+            {/* Global Chat Overlay — replaced by MeetingChatPanel (analyst/lawyer use case).
+                Legacy component kept for power users — uncomment to restore.
+                <GlobalChatOverlay
+                    isOpen={isGlobalChatOpen}
+                    onClose={() => {
+                        setIsGlobalChatOpen(false);
+                        setSubmittedGlobalQuery('');
+                    }}
+                    initialQuery={submittedGlobalQuery}
+                /> */}
+            <MeetingChatPanel
                 isOpen={isGlobalChatOpen}
                 onClose={() => {
                     setIsGlobalChatOpen(false);

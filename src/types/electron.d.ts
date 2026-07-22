@@ -226,6 +226,12 @@ export interface ElectronAPI {
   onSuggestionProcessingStart: (callback: () => void) => () => void
   onSuggestionError: (callback: (error: { error: string }) => void) => () => void
   generateSuggestion: (context: string, lastQuestion: string) => Promise<{ suggestion: string }>
+  kbSuggest: (params: { question: string; transcriptContext?: string }) => Promise<{
+    success: boolean;
+    suggestion?: string;
+    citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
+    error?: string;
+  }>
   getInputDevices: () => Promise<Array<{ id: string; name: string }>>
   getOutputDevices: () => Promise<Array<{ id: string; name: string }>>
   setRecognitionLanguage: (key: string) => Promise<{ success: boolean; error?: string }>
@@ -327,6 +333,7 @@ export interface ElectronAPI {
   regenerateMeetingFollowUp: (id: string, tone?: 'professional' | 'warm' | 'concise' | 'friendly') => Promise<{ success: boolean; error?: string }>
   updateMeetingSpeakerLabels: (id: string, labels: Record<string, string>) => Promise<{ success: boolean; labels?: Record<string, string>; error?: string }>
   deleteMeeting: (id: string) => Promise<boolean>
+  exportMeetingNotes: (meetingId: string, format?: 'markdown' | 'json' | 'txt') => Promise<{ success: boolean; cancelled?: boolean; filePath?: string; byteCount?: number; error?: string }>
   setWindowMode: (mode: 'launcher' | 'overlay', inactive?: boolean) => Promise<void>
   setMeetingInterfaceTheme: (theme: string) => void
   onMeetingInterfaceThemeChanged: (callback: (theme: string) => void) => () => void
@@ -546,6 +553,8 @@ export interface ElectronAPI {
 
   // Tavily Search API
   setTavilyApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
+  setWebSearchEnabled: (enabled: boolean) => Promise<{ success: boolean; enabled: boolean; error?: string }>
+  getWebSearchEnabled: () => Promise<{ success: boolean; enabled: boolean; error?: string }>
 
   // Dynamic Model Discovery
   fetchProviderModels: (provider: 'gemini' | 'groq' | 'openai' | 'claude' | 'deepseek', apiKey: string) => Promise<{ success: boolean; models?: {id: string, label: string}[]; error?: string }>
@@ -671,8 +680,30 @@ export interface ElectronAPI {
   kbAddSource: (params: { clientCaseId: string; sourceType: string; title?: string; sourcePath?: string; content?: string }) => Promise<{ success: boolean; source?: any; error?: string }>;
   kbListSources: (clientCaseId: string) => Promise<{ success: boolean; sources: any[]; error?: string }>;
   kbOpenFileDialog: (filters?: any[]) => Promise<{ success: boolean; filePaths: string[]; cancelled: boolean; error?: string }>;
+  kbAsk: (params: { question: string; clientCaseId?: string }) => Promise<{ success: boolean; error?: string; fallback?: boolean }>;
+  kbCancelAsk: (queryId: string) => Promise<{ success: boolean; error?: string }>;
+  onKBStreamChunk: (callback: (data: { text: string }) => void) => () => void;
+  onKBStreamCitations: (callback: (data: { citations: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }> }) => void) => () => void;
+  onKBStreamComplete: (callback: () => void) => () => void;
+  onKBStreamError: (callback: (data: { error: string }) => void) => () => void;
   suggestSetActiveCase: (params: { clientCaseId: string | null; clientCaseName?: string; clientCaseCompany?: string }) => Promise<{ success: boolean; error?: string }>;
   suggestGetActiveCase: () => Promise<{ success: boolean; clientCaseId: string | null; clientCaseName: string; clientCaseCompany: string }>;
+
+  // Meeting Copilot chat toggles
+  chatSetMode: (mode: 'manual' | 'suggest') => Promise<{ success: boolean; mode?: string; error?: string }>;
+  chatGetMode: () => Promise<{ mode: 'manual' | 'suggest'; error?: string }>;
+  chatExpandOverlay: () => Promise<{ success: boolean; error?: string }>;
+  chatRestoreOverlay: () => Promise<{ success: boolean; error?: string }>;
+  chatSetWebSearch: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+  chatGetWebSearch: () => Promise<{ enabled: boolean; error?: string }>;
+  chatGetTranscriptContext: () => Promise<{
+    available: boolean;
+    text: string;
+    isLive: boolean;
+    segments: Array<{ role: 'interviewer' | 'user' | 'assistant'; text: string; timestamp: number }>;
+    error?: string;
+  }>;
+  onActiveCaseChanged: (callback: (data: { clientCaseId: string | null; name: string; company: string }) => void) => () => void;
 }
 
 /**

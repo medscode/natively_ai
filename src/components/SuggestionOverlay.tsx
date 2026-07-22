@@ -14,6 +14,7 @@ interface GeneratedSuggestion {
     question: string;
     suggestion: string;
     confidence: number;
+    citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
 }
 
 /**
@@ -134,6 +135,19 @@ export const SuggestionOverlay: React.FC<SuggestionOverlayProps> = ({ className 
                         </span>
                     </div>
                     <p className="text-sm text-gray-100 leading-relaxed">{suggestion.suggestion}</p>
+                    {suggestion.citations && suggestion.citations.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                            {suggestion.citations.map((c) => (
+                                <span
+                                    key={c.id}
+                                    title={c.snippet || c.title}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium bg-blue-500/20 text-blue-300 border-blue-500/40"
+                                >
+                                    📄 {c.title}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                     <div className="mt-2 pt-2 border-t border-indigo-700/50">
                         <p className="text-xs text-gray-400 italic">
                             Re: "{suggestion.question.substring(0, 50)}..."

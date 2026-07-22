@@ -242,6 +242,137 @@ export class RAGManager {
     }
 
     /**
+     * Query the active client case's Knowledge Base.
+     * Uses KnowledgeBaseManager.queryKnowledgeBase() with tenantId scoping,
+     * then streams an LLM answer grounded in the retrieved chunks.
+     * Falls back to web search if the KB has no answer and web search is enabled.
+     */
+    async *queryKB(
+        query: string,
+        options?: { clientCaseId?: string; abortSignal?: AbortSignal; topK?: number }
+    ): AsyncGenerator<{ type: 'chunk'; text: string } | { type: 'citations'; citations: any[] } | { type: 'done' }, void, unknown> {
+        const { KnowledgeBaseManager } = await import('./KnowledgeBaseManager');
+        const kb = KnowledgeBaseManager.getInstance();
+        // Ensure KB has the pipeline ready (idempotent)
+        if (!kb.isReady() && this.vectorStore && this.embeddingPipeline) {
+            kb.setPipeline(this.vectorStore, this.embeddingPipeline);
+        }
+
+        // Resolve the active case id from arg or KB gate
+        let caseId = options?.clientCaseId;
+        if (!caseId) {
+            const { getActiveClientCase } = await import('./suggest/KnowledgeBaseGate');
+            caseId = getActiveClientCase().clientCaseId;
+        }
+        if (!caseId) {
+            yield { type: 'chunk', text: 'No active client case is set. Pick a client case in Settings → Knowledge Base first.' };
+            yield { type: 'done' };
+            return;
+        }
+
+        // Retrieve chunks from the KB
+        const result = await kb.queryKnowledgeBase(caseId, query, { limit: options?.topK ?? 5 });
+        const chunks = (result && (result as any).chunks) || [];
+
+        if (chunks.length === 0) {
+            // Fall back to web search if enabled
+            try {
+                const { SettingsManager } = await import('../services/SettingsManager');
+                const webEnabled = SettingsManager.getInstance().get('webSearchEnabled') === true
+                    || SettingsManager.getInstance().get('chatWebSearch') === true;
+                if (webEnabled) {
+                    const { DefaultWebSearchProvider } = await import('./WebSearchProvider');
+                    const webProvider = new DefaultWebSearchProvider();
+                    const webResults = await webProvider.search(query, { maxResults: 5 });
+                    if (webResults.length > 0) {
+                        const citations = webResults.map((r, idx) => ({
+                            id: `web-${idx}`,
+                            sourceType: 'web',
+                            title: r.title,
+                            similarity: undefined,
+                            snippet: r.snippet,
+                            url: r.url,
+                        }));
+                        yield { type: 'citations', citations };
+                        const formattedContext = webResults.map((r, i) =>
+                            `[${i + 1} — ${r.title} (${r.url})]\n${r.snippet}`
+                        ).join('\n\n');
+                        const prompt = `You are answering a question using web search results.
+Use ONLY the following web snippets to answer. Cite the source URL in your answer.
+
+Web results:
+${formattedContext}
+
+Question: ${query}
+
+Answer (include source URLs):`;
+                        if (this.llmHelper) {
+                            try {
+                                const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+                                for await (const chunk of stream) {
+                                    if (options?.abortSignal?.aborted) break;
+                                    yield { type: 'chunk', text: chunk };
+                                }
+                            } catch (e: any) {
+                                yield { type: 'chunk', text: `\n\n[web streaming error: ${e?.message || 'unknown'}]` };
+                            }
+                        }
+                        yield { type: 'done' };
+                        return;
+                    }
+                }
+            } catch (e: any) {
+                console.warn('[RAGManager] KB→web fallback failed:', e?.message);
+            }
+            yield { type: 'chunk', text: `I don't have information on this in the knowledge base. Try uploading a document or enabling web search in Settings.` };
+            yield { type: 'done' };
+            return;
+        }
+
+        // Yield citations up-front so the renderer can render badges
+        const citations = chunks.map((c: any, idx: number) => ({
+            id: c.id ?? `chunk-${idx}`,
+            sourceType: c.sourceType ?? 'file',
+            title: c.title ?? 'Knowledge Source',
+            similarity: c.score,
+            snippet: (c.text || '').slice(0, 240),
+        }));
+        yield { type: 'citations', citations };
+
+        // Build prompt with retrieved context
+        const formattedContext = chunks.map((c: any, idx: number) =>
+            `[Chunk ${idx + 1}${c.title ? ` — ${c.title}` : ''}]\n${c.text || ''}`
+        ).join('\n\n');
+        const prompt = `You are an assistant answering questions about a specific client's knowledge base.
+Use ONLY the following context to answer. If the context does not contain the answer, say so explicitly — do not invent.
+
+Context:
+${formattedContext}
+
+Question: ${query}
+
+Answer:`;
+
+        if (!this.llmHelper) {
+            yield { type: 'chunk', text: 'LLM helper not initialized.' };
+            yield { type: 'done' };
+            return;
+        }
+
+        // Stream the response
+        try {
+            const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+            for await (const chunk of stream) {
+                if (options?.abortSignal?.aborted) break;
+                yield { type: 'chunk', text: chunk };
+            }
+        } catch (e: any) {
+            yield { type: 'chunk', text: `\n\n[error: ${e?.message || 'streaming failed'}]` };
+        }
+        yield { type: 'done' };
+    }
+
+    /**
      * Smart query - auto-detects scope
      */
     async *query(

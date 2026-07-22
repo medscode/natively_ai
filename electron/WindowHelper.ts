@@ -1274,6 +1274,49 @@ export class WindowHelper {
     }
   }
 
+  /**
+   * Expand the overlay window to full screen on the active display.
+   * Used by Meeting Copilot chat panel when it opens, so the panel has
+   * room to render. Saves the previous bounds so we can restore on close.
+   */
+  public expandOverlayToFullScreen(): void {
+    const win = this.overlayWindow;
+    if (!win || win.isDestroyed()) return;
+    if (!this.overlayBounds) {
+      try {
+        this.overlayBounds = win.getBounds();
+      } catch {
+        this.overlayBounds = null;
+      }
+    }
+    try {
+      const display = screen.getDisplayMatching(win.getBounds());
+      const work = display.workArea;
+      win.setBounds({ x: work.x, y: work.y, width: work.width, height: work.height });
+      win.setOpacity(0.85); // slight transparency so the meeting app underneath is visible
+    } catch (e: any) {
+      console.warn('[WindowHelper] expandOverlayToFullScreen failed:', e?.message);
+    }
+  }
+
+  /**
+   * Restore the overlay window to its previous bounds (saved by
+   * expandOverlayToFullScreen). Used when Meeting Copilot chat closes.
+   */
+  public restoreOverlayBounds(): void {
+    const win = this.overlayWindow;
+    if (!win || win.isDestroyed()) return;
+    try {
+      if (this.overlayBounds) {
+        win.setBounds(this.overlayBounds);
+        this.overlayBounds = null;
+      }
+      win.setOpacity(1.0);
+    } catch (e: any) {
+      console.warn('[WindowHelper] restoreOverlayBounds failed:', e?.message);
+    }
+  }
+
   public closeWindow(): void {
     const win = this.launcherWindow;
     if (!win || win.isDestroyed()) return;

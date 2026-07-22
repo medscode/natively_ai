@@ -217,13 +217,31 @@ export function ClientCaseSelector({ selectedCaseId, onCaseSelected, label }: Cl
             </button>
           ) : (
             <div className="p-3 border-b border-border-subtle space-y-2 bg-bg-main/50">
-              <input
-                type="text"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                placeholder="Case name (e.g. Acme Corp)"
-                className="w-full px-3 py-1.5 text-xs bg-bg-input border border-border-subtle rounded text-text-primary placeholder-text-tertiary/60 focus:outline-none focus:ring-1 focus:ring-accent-primary"
-              />
+              <div>
+                <label htmlFor="new-client-case-name" className="block text-[10px] font-medium text-text-secondary mb-1">
+                  Case name <span className="text-red-400" aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="new-client-case-name"
+                  type="text"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  aria-required="true"
+                  aria-invalid={!newName.trim()}
+                  aria-describedby={!newName.trim() ? 'new-client-case-name-error' : undefined}
+                  className={`w-full px-3 py-1.5 text-xs bg-bg-input border rounded text-text-primary placeholder-text-tertiary/60 focus:outline-none focus:ring-1 ${
+                    !newName.trim()
+                      ? 'border-red-500/60 focus:ring-red-500/50'
+                      : 'border-border-subtle focus:ring-accent-primary'
+                  }`}
+                />
+                {!newName.trim() && (
+                  <p id="new-client-case-name-error" className="text-[10px] text-red-400 mt-1">
+                    Case name is required
+                  </p>
+                )}
+              </div>
               <input
                 type="text"
                 value={newCompany}

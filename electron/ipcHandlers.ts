@@ -186,6 +186,21 @@ export function initializeIpcHandlers(appState: AppState): void {
     ipcMain.on(channel, listener);
   };
 
+  /**
+   * Wraps a registration block so a single failure doesn't starve later handlers.
+   * Logs success/failure for each subsystem so silent drops like the kb:create-client-case
+   * regression (gated behind NATIVELY_E2E) become loud in development.
+   */
+  const wrapRegistration = (name: string, fn: () => void): void => {
+    try {
+      fn();
+      console.log(`[IPC] section ${name} registered successfully`);
+    } catch (err: any) {
+      console.error(`[IPC] section ${name} FAILED: ${err?.message ?? err}`);
+      if (err?.stack) console.error(err.stack);
+    }
+  };
+
   const broadcastCredentialsChanged = (): void => {
     BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send('credentials-changed');
@@ -714,6 +729,81 @@ export function initializeIpcHandlers(appState: AppState): void {
     } catch (error: any) {
       // console.error("Error generating suggestion:", error)
       throw error;
+    }
+  });
+
+  // KB-grounded suggestion: combines live transcript question + active KB chunks
+  // to produce a short follow-up the user could say. PRD Phase 2 (Suggest Mode).
+  safeHandle('kb:suggest', async (event, params: { question: string; transcriptContext?: string }) => {
+    try {
+      const question = (params?.question || '').trim();
+      const transcriptContext = (params?.transcriptContext || '').trim();
+      if (!question) {
+        return { success: false, error: 'question is required' };
+      }
+      const { getActiveClientCase } = require('./rag/suggest/KnowledgeBaseGate');
+      const { KnowledgeBaseManager } = require('./rag/KnowledgeBaseManager');
+      const active = getActiveClientCase();
+      if (!active.clientCaseId) {
+        return { success: false, error: 'no_active_client_case' };
+      }
+
+      const kb = KnowledgeBaseManager.getInstance();
+      const ragManager = appState.getRAGManager();
+      if (!kb.isReady() && ragManager && ragManager.isReady()) {
+        // Reuse RAGManager's vector store + embedding pipeline if KB hasn't been wired
+        const vs = (ragManager as any).vectorStore;
+        const ep = (ragManager as any).embeddingPipeline;
+        if (vs && ep) kb.setPipeline(vs, ep);
+      }
+
+      const result = await kb.queryKnowledgeBase(active.clientCaseId, question, { limit: 4 });
+      const chunks = (result && (result as any).chunks) || [];
+      const citations = chunks.map((c: any, idx: number) => ({
+        id: c.id ?? `chunk-${idx}`,
+        sourceType: c.sourceType ?? 'file',
+        title: c.title ?? 'Knowledge Source',
+        similarity: c.score,
+        snippet: (c.text || '').slice(0, 200),
+      }));
+
+      if (chunks.length === 0) {
+        return { success: false, error: 'no_relevant_chunks', question };
+      }
+
+      // Build a short suggestion prompt
+      const ctxBlock = chunks.map((c: any, i: number) =>
+        `[${i + 1}${c.title ? ` — ${c.title}` : ''}] ${c.text || ''}`
+      ).join('\n\n');
+      const prompt = `You are coaching a user during a live conversation. The user just heard/asked:
+
+"${question}"
+
+${transcriptContext ? `Recent transcript:\n${transcriptContext.slice(0, 800)}\n\n` : ''}Reference context from the active client's knowledge base:
+${ctxBlock}
+
+Write a SHORT (1-3 sentence) suggested follow-up the user could say next, grounded in the reference context. Be direct, conversational, and natural. Do not include citations, footnotes, or preamble — just the words they could say.`;
+
+      const llmHelper = appState.processingHelper.getLLMHelper();
+      const suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
+
+      // Send to all renderer windows so SuggestionOverlay picks it up
+      const { BrowserWindow } = require('electron');
+      BrowserWindow.getAllWindows().forEach((win: any) => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('suggestion-generated', {
+            question,
+            suggestion,
+            confidence: 0.8,
+            citations,
+          });
+        }
+      });
+
+      return { success: true, suggestion, citations };
+    } catch (error: any) {
+      console.error('[IPC] kb:suggest failed:', error);
+      return { success: false, error: error.message };
     }
   });
 
@@ -3796,6 +3886,57 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   safeHandle('delete-meeting', async (_, id: string) => {
     return DatabaseManager.getInstance().deleteMeeting(id);
+  });
+
+  safeHandle('meeting:export-notes', async (_, params: { meetingId: string; format: 'markdown' | 'json' | 'txt' }) => {
+    try {
+      if (!params?.meetingId || typeof params.meetingId !== 'string') {
+        return { success: false, error: 'meetingId is required' };
+      }
+      const format = params.format ?? 'markdown';
+      if (!['markdown', 'json', 'txt'].includes(format)) {
+        return { success: false, error: `format must be one of: markdown, json, txt (got: ${format})` };
+      }
+      const meeting = DatabaseManager.getInstance().getMeetingDetails(params.meetingId);
+      if (!meeting) {
+        return { success: false, error: 'meeting not found' };
+      }
+      const summary = meeting.summary ? JSON.parse(meeting.summary) : null;
+      let content: string;
+      let defaultFilename: string;
+      const safeTitle = (meeting.title || `meeting-${params.meetingId}`).replace(/[^a-zA-Z0-9-_ ]/g, '_');
+      const dateStr = new Date(meeting.start_time || Date.now()).toISOString().split('T')[0];
+      if (format === 'json') {
+        content = JSON.stringify({ meeting: { id: meeting.id, title: meeting.title, start_time: meeting.start_time, duration_ms: meeting.duration_ms }, summary }, null, 2);
+        defaultFilename = `${safeTitle}-${dateStr}.json`;
+      } else if (format === 'txt') {
+        content = renderNotesAsText(meeting.title || '', summary);
+        defaultFilename = `${safeTitle}-${dateStr}.txt`;
+      } else {
+        content = renderNotesAsMarkdown(meeting.title || '', meeting.start_time, summary);
+        defaultFilename = `${safeTitle}-${dateStr}.md`;
+      }
+      const { dialog: dlg } = require('electron');
+      const saveResult = await dlg.showSaveDialog({
+        title: 'Export meeting notes',
+        defaultPath: defaultFilename,
+        filters: [
+          format === 'json'
+            ? { name: 'JSON', extensions: ['json'] }
+            : format === 'txt'
+            ? { name: 'Text', extensions: ['txt'] }
+            : { name: 'Markdown', extensions: ['md', 'markdown'] },
+        ],
+      });
+      if (saveResult.canceled || !saveResult.filePath) {
+        return { success: false, cancelled: true };
+      }
+      require('fs').writeFileSync(saveResult.filePath, content, 'utf-8');
+      return { success: true, filePath: saveResult.filePath, byteCount: Buffer.byteLength(content, 'utf-8') };
+    } catch (err: any) {
+      console.error('[IPC] meeting:export-notes failed:', err);
+      return { success: false, error: err.message };
+    }
   });
 
   safeHandle('check-for-updates', async () => {
@@ -8317,6 +8458,55 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  // KB-aware chat (Phase 1 demo path). Streams chunks + citations from the
+  // active client case's Knowledge Base.
+  safeHandle('kb:ask', async (event, { question, clientCaseId }: { question: string; clientCaseId?: string }) => {
+    try {
+      if (!question || typeof question !== 'string' || !question.trim()) {
+        return { success: false, error: 'question is required' };
+      }
+      const ragManager = appState.getRAGManager();
+      if (!ragManager) {
+        return { fallback: true, error: 'RAG manager not initialized' };
+      }
+      const abortController = new AbortController();
+      const queryKey = `kb-${crypto.randomUUID()}`;
+      activeRAGQueries.set(queryKey, abortController);
+
+      const stream = ragManager.queryKB(question, { clientCaseId, abortSignal: abortController.signal });
+
+      for await (const evt of stream) {
+        if (abortController.signal.aborted) break;
+        if (evt.type === 'chunk') {
+          event.sender.send('kb:stream-chunk', { text: evt.text });
+        } else if (evt.type === 'citations') {
+          event.sender.send('kb:stream-citations', { citations: evt.citations });
+        } else if (evt.type === 'done') {
+          event.sender.send('kb:stream-complete', {});
+        }
+      }
+      activeRAGQueries.delete(queryKey);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[IPC] kb:ask failed:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Cancel active KB query
+  safeHandle(
+    'kb:cancel-ask',
+    async (_event, queryId: string) => {
+      const ctrl = activeRAGQueries.get(`kb-${queryId}`);
+      if (ctrl) {
+        ctrl.abort();
+        activeRAGQueries.delete(`kb-${queryId}`);
+        return { success: true };
+      }
+      return { success: false, error: 'no_active_kb_query' };
+    },
+  );
+
   // Cancel active RAG query
   safeHandle(
     'rag:cancel-query',
@@ -8891,6 +9081,123 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
+    }
+  });
+
+  // Web Search session toggle (PRD Phase 4). Off by default. When off, no code
+  // path in the assistant may reach the web. When on, the assistant may
+  // trigger a web search on its own judgment whenever retrieval confidence is
+  // low or the question needs current/external information.
+  safeHandle('web-search:set-enabled', async (_, enabled: boolean) => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      SettingsManager.getInstance().set('webSearchEnabled', Boolean(enabled));
+      return { success: true, enabled: Boolean(enabled) };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('web-search:get-enabled', async () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const enabled = SettingsManager.getInstance().get('webSearchEnabled');
+      return { success: true, enabled: enabled === true };
+    } catch (error: any) {
+      return { success: false, enabled: false, error: error.message };
+    }
+  });
+
+  // ==========================================
+  // Chat panel toggles (Meeting Copilot)
+  // ==========================================
+
+  safeHandle('chat:set-mode', async (_e, mode: 'manual' | 'suggest') => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const valid = mode === 'manual' || mode === 'suggest' ? mode : 'manual';
+      SettingsManager.getInstance().set('chatMode', valid);
+      return { success: true, mode: valid };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('chat:get-mode', async () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const mode = SettingsManager.getInstance().get('chatMode');
+      return { mode: mode === 'suggest' ? 'suggest' : 'manual' };
+    } catch (error: any) {
+      return { mode: 'manual', error: error.message };
+    }
+  });
+
+  // Resize the overlay window to full screen so the Meeting Copilot chat
+  // panel has room to render. Saves the previous bounds so we can restore.
+  safeHandle('chat:expand-overlay', async () => {
+    try {
+      appState.getWindowHelper().expandOverlayToFullScreen();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Restore the overlay window to its previous size (called when chat closes).
+  safeHandle('chat:restore-overlay', async () => {
+    try {
+      appState.getWindowHelper().restoreOverlayBounds();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('chat:set-web-search', async (_e, enabled: boolean) => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      SettingsManager.getInstance().set('chatWebSearch', Boolean(enabled));
+      return { success: true, enabled: Boolean(enabled) };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('chat:get-web-search', async () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const enabled = SettingsManager.getInstance().get('chatWebSearch');
+      return { enabled: enabled === true };
+    } catch (error: any) {
+      return { enabled: false, error: error.message };
+    }
+  });
+
+  safeHandle('chat:get-transcript-context', async () => {
+    try {
+      // Pull the last ~120s from the live transcript brain.
+      // Empty sessions return cleanly with available:false so the renderer never sees a thrown IPC.
+      const im = appState.getIntelligenceManager?.();
+      let items: any[] = [];
+      if (im && typeof im.getContext === 'function') {
+        items = im.getContext(120) || [];
+      }
+      const text = items.map((i: any) => (i.text || '')).join(' ').slice(0, 2000);
+      const cutoff = Date.now() - 60_000;
+      const isLive = items.length > 0 && items.some((i: any) => (i.timestamp || 0) * 1000 > cutoff);
+      return {
+        available: items.length > 0,
+        text,
+        isLive,
+        segments: items.map((i: any) => ({
+          role: i.role,
+          text: i.text,
+          timestamp: (i.timestamp || 0) * 1000,
+        })),
+      };
+    } catch (error: any) {
+      return { available: false, text: '', isLive: false, segments: [], error: error.message };
     }
   });
 
@@ -10780,101 +11087,247 @@ export function initializeIpcHandlers(appState: AppState): void {
         return { success: false, error: e.message };
       }
     });
-
-    // ==========================================
-    // Knowledge Base IPC Handlers
-    // ==========================================
-
-    safeHandle('kb:get-client-cases', async () => {
-      try {
-        return { success: true, cases: KnowledgeBaseManager.getInstance().getClientCases() };
-      } catch (e: any) {
-        return { success: false, cases: [], error: e.message };
-      }
-    });
-
-    safeHandle('kb:create-client-case', async (_, data: { id: string; name: string; company?: string; notes?: string }) => {
-      try {
-        const ok = KnowledgeBaseManager.getInstance().createClientCase(data);
-        return { success: ok };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
-    });
-
-    safeHandle('kb:delete-client-case', async (_, id: string) => {
-      try {
-        KnowledgeBaseManager.getInstance().deleteClientCase(id);
-        return { success: true };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
-    });
-
-    safeHandle('kb:add-source', async (_, params: {
-      clientCaseId: string;
-      sourceType: 'file' | 'web_page' | 'ppt' | 'youtube';
-      title?: string;
-      sourcePath?: string;
-      content?: string;
-    }) => {
-      try {
-        const kb = KnowledgeBaseManager.getInstance();
-        if (!kb.isReady()) {
-          const ragManager = appState.getRAGManager();
-          if (ragManager && ragManager.isReady()) {
-            kb.setPipeline(ragManager.getVectorStore(), ragManager.getEmbeddingPipeline());
-          }
-        }
-        return await kb.addSource(params);
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
-    });
-
-    safeHandle('kb:list-sources', async (_, clientCaseId: string) => {
-      try {
-        return { success: true, sources: KnowledgeBaseManager.getInstance().getSourcesForClient(clientCaseId) };
-      } catch (e: any) {
-        return { success: false, sources: [], error: e.message };
-      }
-    });
-
-    safeHandle('kb:open-file-dialog', async () => {
-      try {
-        const result = await dialog.showOpenDialog({
-          properties: ['openFile', 'multiSelections'],
-          filters: [
-            { name: 'Documents', extensions: ['pdf', 'txt', 'md', 'docx', 'doc', 'pptx', 'ppt', 'html', 'htm'] },
-            { name: 'All Files', extensions: ['*'] },
-          ],
-        });
-        return { success: true, filePaths: result.filePaths, cancelled: result.canceled };
-      } catch (e: any) {
-        return { success: false, cancelled: false, error: e.message };
-      }
-    });
-
-    safeHandle('suggest:set-active-case', async (_, params: {
-      clientCaseId: string | null;
-      clientCaseName?: string;
-      clientCaseCompany?: string;
-    }) => {
-      try {
-        setActiveClientCase(params);
-        return { success: true };
-      } catch (e: any) {
-        return { success: false, error: e.message };
-      }
-    });
-
-    safeHandle('suggest:get-active-case', async () => {
-      try {
-        const active = getActiveClientCase();
-        return { success: true, ...active };
-      } catch (e: any) {
-        return { success: false, clientCaseId: null, clientCaseName: '', clientCaseCompany: '' };
-      }
-    });
   }
+
+  // ==========================================
+  // Knowledge Base IPC Handlers
+  // ==========================================
+
+  wrapRegistration('kb', () => {
+
+  safeHandle('kb:get-client-cases', async () => {
+    try {
+      return { success: true, cases: KnowledgeBaseManager.getInstance().getClientCases() };
+    } catch (e: any) {
+      return { success: false, cases: [], error: e.message };
+    }
+  });
+
+  safeHandle('kb:create-client-case', async (_, data: { id: string; name: string; company?: string; notes?: string }) => {
+    try {
+      if (!data || typeof data.id !== 'string' || data.id.trim().length === 0) {
+        return { success: false, error: 'id is required' };
+      }
+      if (typeof data.name !== 'string' || data.name.trim().length === 0) {
+        return { success: false, error: 'name is required' };
+      }
+      const ok = KnowledgeBaseManager.getInstance().createClientCase(data);
+      // Auto-set the new case as active so the user can immediately use it.
+      // Without this, the user would need to manually click "Set Active" after
+      // every case creation — and active case is lost on every Electron restart.
+      if (ok) {
+        setActiveClientCase({
+          clientCaseId: data.id,
+          clientCaseName: data.name,
+          clientCaseCompany: data.company || '',
+        });
+        // Broadcast so any open MeetingChatPanel updates its LiveKBIndicator.
+        const { BrowserWindow } = require('electron');
+        BrowserWindow.getAllWindows().forEach((win: any) => {
+          if (!win.isDestroyed?.()) {
+            win.webContents.send('active-case-changed', {
+              clientCaseId: data.id,
+              name: data.name,
+              company: data.company || '',
+            });
+          }
+        });
+      }
+      return { success: ok, error: ok ? undefined : 'database_insert_failed' };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('kb:delete-client-case', async (_, id: string) => {
+    try {
+      KnowledgeBaseManager.getInstance().deleteClientCase(id);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('kb:add-source', async (_, params: {
+    clientCaseId: string;
+    sourceType: 'file' | 'web_page' | 'ppt' | 'youtube';
+    title?: string;
+    sourcePath?: string;
+    content?: string;
+  }) => {
+    try {
+      if (!params || typeof params.clientCaseId !== 'string' || params.clientCaseId.trim().length === 0) {
+        return { success: false, error: 'clientCaseId is required' };
+      }
+      if (!params.sourceType || !['file', 'web_page', 'ppt', 'youtube'].includes(params.sourceType)) {
+        return { success: false, error: `sourceType must be one of: file, web_page, ppt, youtube (got: ${params.sourceType})` };
+      }
+      const kb = KnowledgeBaseManager.getInstance();
+      if (!kb.isReady()) {
+        const ragManager = appState.getRAGManager();
+        if (ragManager && ragManager.isReady()) {
+          kb.setPipeline(ragManager.getVectorStore(), ragManager.getEmbeddingPipeline());
+        }
+      }
+      return await kb.addSource(params);
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('kb:list-sources', async (_, clientCaseId: string) => {
+    try {
+      return { success: true, sources: KnowledgeBaseManager.getInstance().getSourcesForClient(clientCaseId) };
+    } catch (e: any) {
+      return { success: false, sources: [], error: e.message };
+    }
+  });
+
+  safeHandle('kb:open-file-dialog', async () => {
+    try {
+      const result = await dialog.showOpenDialog({
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          { name: 'Documents', extensions: ['pdf', 'txt', 'md', 'docx', 'doc', 'pptx', 'ppt', 'html', 'htm'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      return { success: true, filePaths: result.filePaths, cancelled: result.canceled };
+    } catch (e: any) {
+      return { success: false, cancelled: false, error: e.message };
+    }
+  });
+
+  safeHandle('suggest:set-active-case', async (_, params: {
+    clientCaseId: string | null;
+    clientCaseName?: string;
+    clientCaseCompany?: string;
+  }) => {
+    try {
+      setActiveClientCase(params);
+      // Broadcast to all renderer windows so the LiveKBIndicator in MeetingChatPanel
+      // updates reactively without polling.
+      const { BrowserWindow } = require('electron');
+      BrowserWindow.getAllWindows().forEach((win: any) => {
+        if (!win.isDestroyed?.()) {
+          win.webContents.send('active-case-changed', {
+            clientCaseId: params.clientCaseId ?? null,
+            name: params.clientCaseName || '',
+            company: params.clientCaseCompany || '',
+          });
+        }
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('suggest:get-active-case', async () => {
+    try {
+      const active = getActiveClientCase();
+      return { success: true, ...active };
+    } catch (e: any) {
+      return { success: false, clientCaseId: null, clientCaseName: '', clientCaseCompany: '' };
+    }
+  });
+
+  });
+
+  // IPC startup verification — logs any missing channels so silent gating bugs
+  // like the previous NATIVELY_E2E gate surface in the main process console.
+  try {
+    const expected = [
+      'kb:create-client-case',
+      'kb:get-client-cases',
+      'kb:delete-client-case',
+      'kb:add-source',
+      'kb:list-sources',
+      'kb:open-file-dialog',
+      'suggest:set-active-case',
+      'suggest:get-active-case',
+    ];
+    const internal = (ipcMain as unknown as { _invokeHandlers?: Map<string, unknown> })._invokeHandlers;
+    const registered = internal ? Array.from(internal.keys()) : [];
+    const missing = expected.filter((c) => !registered.includes(c));
+    if (missing.length === 0) {
+      console.log(`[IPC][VERIFY] all ${expected.length} expected channels present (${registered.length} total registered)`);
+    } else {
+      console.error(`[IPC][VERIFY] MISSING channels: ${missing.join(', ')} (${registered.length} total registered)`);
+    }
+  } catch (err) {
+    console.warn('[IPC][VERIFY] could not introspect ipcMain._invokeHandlers:', (err as Error).message);
+  }
+}
+
+// Helper: render meeting notes as Markdown for the meeting:export-notes IPC.
+function renderNotesAsMarkdown(title: string, startTime: number | null, summary: any): string {
+  const lines: string[] = [];
+  lines.push(`# ${title || 'Meeting notes'}`);
+  lines.push('');
+  if (startTime) {
+    lines.push(`*${new Date(startTime).toLocaleString()}*`);
+    lines.push('');
+  }
+  if (!summary) {
+    lines.push('_No summary available._');
+    return lines.join('\n');
+  }
+  const sections: Array<{ key: string; label: string }> = [
+    { key: 'decisions', label: '## Decisions' },
+    { key: 'actionItems', label: '## Action items' },
+    { key: 'keyQA', label: '## Key Q&A' },
+    { key: 'highlights', label: '## Highlights' },
+  ];
+  for (const s of sections) {
+    const items = summary[s.key];
+    if (Array.isArray(items) && items.length > 0) {
+      lines.push(s.label);
+      for (const item of items) {
+        lines.push(`- ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+      }
+      lines.push('');
+    }
+  }
+  if (summary.narrative || summary.summary) {
+    lines.push('## Summary');
+    lines.push('');
+    lines.push(summary.narrative || summary.summary);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function renderNotesAsText(title: string, summary: any): string {
+  const lines: string[] = [];
+  lines.push((title || 'Meeting notes').toUpperCase());
+  lines.push('='.repeat(Math.max(title.length, 12)));
+  lines.push('');
+  if (!summary) {
+    lines.push('No summary available.');
+    return lines.join('\n');
+  }
+  const sections = [
+    { key: 'decisions', label: 'DECISIONS' },
+    { key: 'actionItems', label: 'ACTION ITEMS' },
+    { key: 'keyQA', label: 'KEY Q&A' },
+    { key: 'highlights', label: 'HIGHLIGHTS' },
+  ];
+  for (const s of sections) {
+    const items = summary[s.key];
+    if (Array.isArray(items) && items.length > 0) {
+      lines.push(s.label);
+      for (const item of items) {
+        lines.push(`  - ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+      }
+      lines.push('');
+    }
+  }
+  if (summary.narrative || summary.summary) {
+    lines.push('SUMMARY');
+    lines.push('');
+    lines.push(summary.narrative || summary.summary);
+    lines.push('');
+  }
+  return lines.join('\n');
 }

@@ -143,8 +143,8 @@ export function KnowledgeBaseSettings() {
         setWebUrl('');
         setShowAddSource(false);
         setMessage({ type: 'success', text: 'Web page added and processing started.' });
-        // Re-fetch sources after a delay
-        setTimeout(() => loadSources(selectedCase.id), 2000);
+        // Re-fetch sources immediately
+        await loadSources(selectedCase.id);
       } else {
         setMessage({ type: 'error', text: result?.error || 'Failed to add web page.' });
       }
@@ -183,8 +183,8 @@ export function KnowledgeBaseSettings() {
       });
       if (result?.success) {
         setMessage({ type: 'success', text: `File "${fileName}" uploaded and processing started.` });
-        // Re-fetch sources after a delay
-        setTimeout(() => loadSources(selectedCase.id), 2000);
+        // Re-fetch sources immediately so the new row appears in the list
+        await loadSources(selectedCase.id);
       } else {
         setMessage({ type: 'error', text: result?.error || 'Failed to upload file.' });
       }

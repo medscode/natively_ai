@@ -8,6 +8,7 @@ import {
   Globe,
   HelpCircle,
   Image,
+  Sparkles,
   Lightbulb,
   List,
   MessageSquare,
@@ -174,6 +175,7 @@ import { useT } from '../i18n';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import MeetingChatPanel from './MeetingChatPanel';
 import { useResolvedTheme } from '../hooks/useResolvedTheme';
 import { genMessageId } from '../utils/messageId';
 import { mapLanguageForPrism, isBlockCode } from '../utils/prismLanguage';
@@ -592,6 +594,8 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
   const [isExpanded, setIsExpanded] = useState(true);
   const [inputValue, setInputValue] = useState('');
   const [availableSkills, setAvailableSkills] = useState<SkillSummary[]>([]);
+  // Meeting Copilot panel — opens above the existing chat surface
+  const [isMeetingPanelOpen, setIsMeetingPanelOpen] = useState(false);
   const [skillPickerIndex, setSkillPickerIndex] = useState(0);
   const { shortcuts, isShortcutPressed } = useShortcuts();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -5848,8 +5852,9 @@ Provide only the answer, nothing else.`;
                 </div>
               )}
 
-              {/* System Audio / Screen Recording Warning Banner */}
-              {systemAudioWarning && (
+              {/* System Audio / Screen Recording Warning Banner — hidden in Meeting Copilot
+                  since this is not an interview tool. Code preserved. */}
+              {false && (systemAudioWarning as any) && (
                 <div className="flex items-center justify-between mx-4 mt-3 mb-1 px-3.5 py-2.5 bg-yellow-500/10 border border-yellow-500/20 rounded-[12px] shadow-sm relative no-drag group/warning">
                   <div className="flex flex-col gap-1 pr-3">
                     <div className="flex items-center gap-2 text-[12.5px] text-yellow-600 dark:text-yellow-400/90 font-medium leading-tight">
@@ -5869,13 +5874,13 @@ Provide only the answer, nothing else.`;
                         </svg>
                       </div>
                       <span>
-                        {systemAudioWarning.kind === 'screen-recording-permission'
+                        {(systemAudioWarning as any).kind === 'screen-recording-permission'
                           ? t('Screen Recording Permission Denied')
                           : t('Audio Capture Issue')}
                       </span>
                     </div>
                     <p className="text-[11px] text-yellow-600/70 dark:text-yellow-400/60 leading-snug pl-[26px]">
-                      {systemAudioWarning.message}
+                      {(systemAudioWarning as any).message}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -5890,12 +5895,13 @@ Provide only the answer, nothing else.`;
                       Settings on Windows or when channel is unknown.
                     */}
                     {(() => {
+                      const warn: any = systemAudioWarning;
                       const wantsScreenCapturePane =
-                        systemAudioWarning.kind === 'screen-recording-permission' ||
-                        systemAudioWarning.channel === 'system';
+                        warn.kind === 'screen-recording-permission' ||
+                        warn.channel === 'system';
                       const wantsMicrophonePane =
-                        systemAudioWarning.kind === 'audio-capture-failure' &&
-                        systemAudioWarning.channel === 'mic';
+                        warn.kind === 'audio-capture-failure' &&
+                        warn.channel === 'mic';
                       const deepLinkUrl = !isMac
                         ? null
                         : wantsScreenCapturePane
@@ -5953,7 +5959,7 @@ Provide only the answer, nothing else.`;
                                     setSystemAudioWarning({
                                       kind: 'audio-capture-failure',
                                       message: result.message,
-                                      channel: systemAudioWarning.channel,
+                                      channel: (systemAudioWarning as any).channel,
                                     });
                                   }
                                 } catch (err) {
@@ -5983,8 +5989,9 @@ Provide only the answer, nothing else.`;
                 </div>
               )}
 
-              {/* PR #173: STT Not Configured Warning Banner */}
-              {sttNotConfigured && (
+              {/* PR #173: STT Not Configured Warning Banner — hidden in Meeting Copilot.
+                  Code preserved. */}
+              {false && sttNotConfigured && (
                 <div className="flex items-center justify-between mx-4 mt-3 mb-1 px-3.5 py-2.5 bg-orange-500/10 border border-orange-500/20 rounded-[12px] shadow-sm relative no-drag group/stt-warning">
                   <div className="flex flex-col gap-1 pr-3">
                     <div className="flex items-center gap-2 text-[12.5px] text-orange-600 dark:text-orange-400/90 font-medium leading-tight">
@@ -6061,8 +6068,10 @@ Provide only the answer, nothing else.`;
                 />
               ) : null}
 
-              {/* Chat History - Only show if there are messages OR active states */}
-              {showAnswerPanel && (
+              {/* Chat History - hidden in Meeting Copilot; MeetingChatPanel renders
+                  the new chat surface with KB-grounded answers + citations.
+                  Code preserved below for power users. */}
+              {false && showAnswerPanel && (
                 <motion.div
                   ref={scrollContainerRef}
                   className="relative z-10 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3 no-drag isolate"
@@ -6169,7 +6178,12 @@ Provide only the answer, nothing else.`;
                 </motion.div>
               )}
 
-              {/* Quick Actions - Minimal & Clean */}
+              {/* Quick Actions - Minimal & Clean — hidden in Meeting Copilot; preserved.
+                  The 5 quick-action buttons (What to answer / Clarify / Recap / Follow up / Answer)
+                  remain available via the ••• More popover inside MeetingChatPanel.tsx.
+                  Code preserved below for power users.
+              */}
+              {false && (
               <div
                 className={`flex flex-nowrap justify-center items-center gap-1.5 px-4 pb-3 overflow-x-hidden ${rollingTranscript && showTranscript ? 'pt-1' : 'pt-3'}`}
               >
@@ -6230,8 +6244,13 @@ Provide only the answer, nothing else.`;
                   )}
                 </button>
               </div>
+              )}
 
-              {/* Input Area */}
+              {/* Input Area — legacy interview chat input. Hidden in Meeting Copilot;
+                  the redesigned MeetingChatPanel.tsx renders the new chat surface.
+                  Code preserved below for power users and to avoid breaking
+                  keyboard shortcuts (Cmd+B, Cmd+1..5, etc.). */}
+              {false && (
               <div className="p-3 pt-0">
                 {/* Latent Context Preview (Attached Screenshot) */}
                 {attachedContext.length > 0 && (
@@ -6284,7 +6303,7 @@ Provide only the answer, nothing else.`;
                                     activation hotkey is already claimed by another app or by the
                                     OS). Click-to-activate still works (mousedown listener is
                                     independent of the hotkey), but the user can rebind in Settings. */}
-                {stealthHotkeyConflict && (
+                {stealthHotkeyConflict && false && (
                   <div
                     className="mb-2 px-3 py-2 rounded-xl border border-rose-400/40 bg-rose-500/10 text-[11px] flex items-center gap-2"
                     data-stealth-ignore="true"
@@ -6320,7 +6339,7 @@ Provide only the answer, nothing else.`;
                                     doesn't exist on Windows, and the underlying CGEventTap
                                     Rust module ships only in the Darwin binary. Gating here
                                     is belt-and-suspenders on top of the native-side gate. */}
-                {isMac && stealthPermissionMissing && (
+                {isMac && stealthPermissionMissing && false && (
                   <div
                     className="mb-2 px-3 py-2 rounded-xl border border-amber-400/40 bg-amber-500/10 text-[11px] flex items-center gap-2"
                     data-stealth-ignore="true"
@@ -6570,10 +6589,36 @@ Provide only the answer, nothing else.`;
                   </button>
                 </div>
               </div>
+              )}
+
             </motion.div>
           </motion.div>
       {/* end always-mounted shell */}
     </div>
+
+    {/* Meeting Copilot panel — opens above this chat surface with KB indicator,
+        Manual/Suggest toggle, + action sheet, citations inline. Triggered by
+        the Sparkles button next to the input. */}
+    <MeetingChatPanel
+        isOpen={isMeetingPanelOpen}
+        onClose={() => setIsMeetingPanelOpen(false)}
+        initialQuery={inputValue}
+    />
+
+    {/* Floating "Open Meeting Copilot" button — visible top-right when this chat
+        surface is mounted. Click to open the redesigned panel. */}
+    <button
+        onClick={() => {
+            console.log('[Copilot] button clicked, setting isOpen=true');
+            setIsMeetingPanelOpen(true);
+        }}
+        title="Open Meeting Copilot"
+        className="fixed top-3 right-3 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 text-[11px] font-medium backdrop-blur-sm"
+        style={{ pointerEvents: 'auto' }}
+    >
+        <Sparkles size={12} />
+        <span>Copilot</span>
+    </button>
     </>
   );
 };
