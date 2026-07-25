@@ -291,7 +291,44 @@ export class CredentialsManager {
             console.log('[CredentialsManager] Self-healed sttProvider: none→natively (Natively key present)');
             return 'natively';
         }
+        // Self-heal: if provider is 'none' AND no API keys are configured for any cloud
+        // STT provider, fall back to local-whisper (on-device, no API key needed). This
+        // makes a fresh install with no keys work out of the box instead of silently
+        // producing empty transcripts. The user can still change to a cloud provider
+        // later via Settings.
+        if (provider === 'none' && !this.hasAnyCloudSttKey()) {
+            this.credentials.sttProvider = 'local-whisper';
+            this.saveCredentials();
+            console.log('[CredentialsManager] Self-healed sttProvider: none→local-whisper (no cloud keys, falling back to on-device STT)');
+            return 'local-whisper';
+        }
+        // Self-heal: provider is 'google' but no Google creds configured. User selected
+        // Google Cloud in Settings without uploading a service-account JSON; calling
+        // GoogleSTT without creds returns empty transcripts. Fall back to local-whisper
+        // (always available, no key needed). User can re-select Google Cloud + upload JSON
+        // later and the choice will stick.
+        if (provider === 'google' && !this.credentials.googleCloudKeyJson) {
+            this.credentials.sttProvider = 'local-whisper';
+            this.saveCredentials();
+            console.log('[CredentialsManager] Self-healed sttProvider: google→local-whisper (no Google creds configured)');
+            return 'local-whisper';
+        }
         return provider;
+    }
+
+    private hasAnyCloudSttKey(): boolean {
+        const c: any = this.credentials;
+        return Boolean(
+            c.deepgramApiKey ||
+            c.openaiApiKey ||
+            c.groqApiKey ||
+            c.elevenlabsApiKey ||
+            c.sonioxApiKey ||
+            c.googleCloudKeyJson ||
+            c.azureSpeechKey ||
+            c.ibmWatsonApiKey ||
+            c.nativelyApiKey,
+        );
     }
 
     public getDeepgramApiKey(): string | undefined {

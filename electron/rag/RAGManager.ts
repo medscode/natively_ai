@@ -40,6 +40,12 @@ export class RAGManager {
     private retriever: RAGRetriever;
     private llmHelper: LLMHelper | null = null;
     private liveIndexer: LiveRAGIndexer;
+    // Optional ref to IntelligenceManager — when set, kb:ask injects a
+    // <live_transcript> block with the last 120s of transcript so the Copilot
+    // answer can reference what was just said. Set via setIntelligenceManager().
+    private intelligenceManager: { getContext?: (lastSeconds: number) => Array<{ text?: string }> } | null = null;
+    // Default-on; flipped to false by the renderer's live-transcript toggle.
+    private liveTranscriptInjectionEnabled = true;
     /** Guards against concurrent reprocessMeeting() calls for the same meeting ID. */
     private _reprocessInFlight = new Set<string>();
 
@@ -72,6 +78,22 @@ export class RAGManager {
      */
     setLLMHelper(llmHelper: LLMHelper): void {
         this.llmHelper = llmHelper;
+    }
+
+    /**
+     * Inject a reference to IntelligenceManager so `kb:ask` can pull a
+     * <live_transcript> block from the last N seconds of conversation.
+     */
+    setIntelligenceManager(im: { getContext?: (lastSeconds: number) => Array<{ text?: string }> } | null): void {
+        this.intelligenceManager = im;
+    }
+
+    /**
+     * Toggle whether `kb:ask` injects the live transcript into its prompt.
+     * Renderer-side: Copilot panel footer toggle (default on).
+     */
+    setLiveTranscriptInjectionEnabled(enabled: boolean): void {
+        this.liveTranscriptInjectionEnabled = Boolean(enabled);
     }
 
     getEmbeddingPipeline(): EmbeddingPipeline {
@@ -345,11 +367,33 @@ Answer (include source URLs):`;
         const formattedContext = chunks.map((c: any, idx: number) =>
             `[Chunk ${idx + 1}${c.title ? ` — ${c.title}` : ''}]\n${c.text || ''}`
         ).join('\n\n');
+
+        // Optional live transcript block — when an IntelligenceManager ref is
+        // wired AND the renderer hasn't disabled injection, pull the last 120s
+        // of conversation so the Copilot answer can reference what was just said.
+        // Capped at 1200 chars. Wrapped in try/catch so a missing/faulty IM
+        // never breaks the KB-grounded path.
+        let liveBlock = '';
+        if (this.liveTranscriptInjectionEnabled && this.intelligenceManager) {
+            try {
+                const items = this.intelligenceManager.getContext?.(120) || [];
+                const t = items.map((i) => (i && typeof i.text === 'string') ? i.text : '')
+                    .filter(Boolean)
+                    .join(' ')
+                    .slice(0, 1200);
+                if (t) {
+                    liveBlock = `\n\n<live_transcript note="most recent spoken context, may be partial">\n${t}\n</live_transcript>`;
+                }
+            } catch (_err) {
+                // non-fatal — KB answer proceeds without live context
+            }
+        }
+
         const prompt = `You are an assistant answering questions about a specific client's knowledge base.
 Use ONLY the following context to answer. If the context does not contain the answer, say so explicitly — do not invent.
 
 Context:
-${formattedContext}
+${formattedContext}${liveBlock}
 
 Question: ${query}
 

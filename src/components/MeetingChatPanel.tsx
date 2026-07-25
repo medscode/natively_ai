@@ -182,6 +182,11 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
         citations?: Citation[];
         source: 'live' | 'mock';
     } | null>(null);
+    // Live transcript strip in the panel footer — pulls from chatGetTranscriptContext
+    // (last 120s of conversation). Default ON; footer toggle hides it.
+    const [liveTranscriptEnabled, setLiveTranscriptEnabled] = useState(true);
+    const [liveSegments, setLiveSegments] = useState<Array<{ role: 'interviewer' | 'user' | 'assistant'; text: string; timestamp: number }>>([]);
+    const [liveDot, setLiveDot] = useState(false);
     const streamBuffer = useStreamBuffer();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const coordinatorRef = useRef<SuggestModeCoordinator | null>(null);
@@ -194,10 +199,12 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
 
         const load = async () => {
             try {
-                const [caseRes, modeRes, webRes] = await Promise.all([
+                const [caseRes, modeRes, webRes, liveRes, transcriptRes] = await Promise.all([
                     window.electronAPI?.suggestGetActiveCase?.(),
                     window.electronAPI?.chatGetMode?.(),
                     window.electronAPI?.chatGetWebSearch?.(),
+                    window.electronAPI?.chatGetLiveTranscript?.(),
+                    window.electronAPI?.chatGetTranscriptContext?.(),
                 ]);
                 if (!active) return;
                 if (caseRes?.success) {
@@ -209,6 +216,8 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 }
                 if (modeRes?.mode) setMode(modeRes.mode as Mode);
                 if (webRes && typeof webRes.enabled === 'boolean') setWebSearch(webRes.enabled);
+                if (liveRes && typeof liveRes.enabled === 'boolean') setLiveTranscriptEnabled(liveRes.enabled);
+                if (transcriptRes?.segments) setLiveSegments(transcriptRes.segments);
             } catch (e) {
                 // non-fatal — defaults are fine
             }
@@ -228,6 +237,40 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             unsubCase?.();
         };
     }, [isOpen]);
+
+    // Lightweight polling for the live transcript strip — fires the same IPC
+    // SuggestModeCoordinator uses, but only while the panel is open AND
+    // live-transcript toggle is on. 4s cadence is enough for human speech;
+    // SuggestionOverlay below handles the rich per-segment updates.
+    useEffect(() => {
+        if (!isOpen || !liveTranscriptEnabled) return;
+        let active = true;
+        const refresh = async () => {
+            try {
+                const r = await window.electronAPI?.chatGetTranscriptContext?.();
+                if (active && r?.segments) setLiveSegments(r.segments);
+            } catch { /* non-fatal */ }
+        };
+        const id = window.setInterval(refresh, 4000);
+        // Refresh once immediately so the strip isn't blank for 4s on open.
+        void refresh();
+        // Pulse the dot while segments are fresh (any non-empty response).
+        let dotTimer: number | null = null;
+        const pulse = () => {
+            setLiveDot(true);
+            if (dotTimer) window.clearTimeout(dotTimer);
+            dotTimer = window.setTimeout(() => setLiveDot(false), 2000);
+        };
+        const id2 = window.setInterval(() => {
+            if (liveSegments.length > 0) pulse();
+        }, 4000);
+        return () => {
+            active = false;
+            window.clearInterval(id);
+            window.clearInterval(id2);
+            if (dotTimer) window.clearTimeout(dotTimer);
+        };
+    }, [isOpen, liveTranscriptEnabled, liveSegments.length]);
 
     // Persist mode + web search toggles
     useEffect(() => {
@@ -553,6 +596,35 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     </motion.div>
                                 )}
 
+                                {/* Live transcript strip — last few segments from the
+                                    rolling transcript. Hidden when the toggle is off.
+                                    Mirrors the rich SuggestionOverlay below in a
+                                    compact form. */}
+                                {liveTranscriptEnabled && liveSegments.length > 0 && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 4 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{ duration: 0.18 }}
+                                        className="mb-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/10 text-[12px] text-white/80 max-h-24 overflow-y-auto custom-scrollbar"
+                                    >
+                                        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-white/50 mb-1">
+                                            <span className={`w-1.5 h-1.5 rounded-full ${liveDot ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/60'}`} />
+                                            <span>Live transcript</span>
+                                            <span className="ml-auto text-white/40">{liveSegments.length}</span>
+                                        </div>
+                                        <div className="space-y-1">
+                                            {liveSegments.slice(-6).map((seg, idx) => (
+                                                <div key={`${seg.timestamp}-${idx}`} className="leading-snug">
+                                                    <span className={`font-medium ${seg.role === 'interviewer' ? 'text-blue-300' : seg.role === 'user' ? 'text-emerald-300' : 'text-indigo-300'}`}>
+                                                        {seg.role === 'interviewer' ? '🎤 ' : seg.role === 'user' ? '👤 ' : '🤖 '}
+                                                    </span>
+                                                    <span className="text-white/85">{seg.text}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </motion.div>
+                                )}
+
                                 {/* KB indicator row */}
                                 <div className="flex items-center gap-2 mb-2 px-1">
                                     {activeCase.clientCaseId ? (
@@ -596,6 +668,26 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         title={webSearch ? 'Web search enabled (used when KB has no answer)' : 'Web search disabled'}
                                     >
                                         <Globe size={11} />
+                                    </button>
+
+                                    {/* Live transcript toggle — controls whether the
+                                        footer strip renders AND whether kb:ask injects
+                                        a <live_transcript> block into the prompt. */}
+                                    <button
+                                        onClick={async () => {
+                                            const next = !liveTranscriptEnabled;
+                                            setLiveTranscriptEnabled(next);
+                                            try { await window.electronAPI?.chatSetLiveTranscript?.(next); } catch { /* non-fatal */ }
+                                        }}
+                                        className={`flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] transition-colors ${
+                                            liveTranscriptEnabled
+                                                ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300'
+                                                : 'border-border-subtle text-text-tertiary hover:text-text-secondary'
+                                        }`}
+                                        title={liveTranscriptEnabled ? 'Live transcript: on (Copilot answers use the last 120s)' : 'Live transcript: off'}
+                                    >
+                                        <span className={`w-1.5 h-1.5 rounded-full ${liveTranscriptEnabled ? (liveDot ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/70') : 'bg-white/30'}`} />
+                                        <span>Live</span>
                                     </button>
                                 </div>
 

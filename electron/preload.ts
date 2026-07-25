@@ -1380,6 +1380,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onnxGetRecoveryNotice: (family) => ipcRenderer.invoke('onnx-get-recovery-notice', family),
   onnxResetFamily: (family) => ipcRenderer.invoke('onnx-reset-family', family),
   localWhisperSetModel: (modelId: string) => ipcRenderer.invoke('local-whisper-set-model', modelId),
+  localWhisperSetContextPrompt: (prompt: string) => ipcRenderer.invoke('local-whisper-set-context-prompt', prompt),
+  localWhisperGetContextPrompt: () => ipcRenderer.invoke('local-whisper-get-context-prompt'),
   // In-app recovery: resets the active local-Whisper model + per-channel
   // overrides back to the safe fallback. See electron/ipcHandlers.ts handler.
   localWhisperResetToDefault: () => ipcRenderer.invoke('local-whisper-reset-to-default'),
@@ -1527,6 +1529,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chatRestoreOverlay: () => ipcRenderer.invoke('chat:restore-overlay'),
   chatSetWebSearch: (enabled: boolean) => ipcRenderer.invoke('chat:set-web-search', enabled),
   chatGetWebSearch: () => ipcRenderer.invoke('chat:get-web-search'),
+  chatSetLiveTranscript: (enabled: boolean) => ipcRenderer.invoke('chat:set-live-transcript', enabled),
+  chatGetLiveTranscript: () => ipcRenderer.invoke('chat:get-live-transcript'),
   chatGetTranscriptContext: () => ipcRenderer.invoke('chat:get-transcript-context'),
   onActiveCaseChanged: (callback: (data: { clientCaseId: string | null; name: string; company: string }) => void) => {
     const subscription = (_: any, data: any) => callback(data);

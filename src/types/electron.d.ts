@@ -696,6 +696,8 @@ export interface ElectronAPI {
   chatRestoreOverlay: () => Promise<{ success: boolean; error?: string }>;
   chatSetWebSearch: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
   chatGetWebSearch: () => Promise<{ enabled: boolean; error?: string }>;
+  chatSetLiveTranscript: (enabled: boolean) => Promise<{ success: boolean; enabled?: boolean; error?: string }>;
+  chatGetLiveTranscript: () => Promise<{ enabled: boolean; error?: string }>;
   chatGetTranscriptContext: () => Promise<{
     available: boolean;
     text: string;

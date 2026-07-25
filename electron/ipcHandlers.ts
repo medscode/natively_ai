@@ -734,73 +734,12 @@ export function initializeIpcHandlers(appState: AppState): void {
 
   // KB-grounded suggestion: combines live transcript question + active KB chunks
   // to produce a short follow-up the user could say. PRD Phase 2 (Suggest Mode).
+  // Body lives in electron/rag/kbSuggest.ts so the live auto-trigger in main.ts
+  // can call it directly without going through IPC plumbing.
   safeHandle('kb:suggest', async (event, params: { question: string; transcriptContext?: string }) => {
     try {
-      const question = (params?.question || '').trim();
-      const transcriptContext = (params?.transcriptContext || '').trim();
-      if (!question) {
-        return { success: false, error: 'question is required' };
-      }
-      const { getActiveClientCase } = require('./rag/suggest/KnowledgeBaseGate');
-      const { KnowledgeBaseManager } = require('./rag/KnowledgeBaseManager');
-      const active = getActiveClientCase();
-      if (!active.clientCaseId) {
-        return { success: false, error: 'no_active_client_case' };
-      }
-
-      const kb = KnowledgeBaseManager.getInstance();
-      const ragManager = appState.getRAGManager();
-      if (!kb.isReady() && ragManager && ragManager.isReady()) {
-        // Reuse RAGManager's vector store + embedding pipeline if KB hasn't been wired
-        const vs = (ragManager as any).vectorStore;
-        const ep = (ragManager as any).embeddingPipeline;
-        if (vs && ep) kb.setPipeline(vs, ep);
-      }
-
-      const result = await kb.queryKnowledgeBase(active.clientCaseId, question, { limit: 4 });
-      const chunks = (result && (result as any).chunks) || [];
-      const citations = chunks.map((c: any, idx: number) => ({
-        id: c.id ?? `chunk-${idx}`,
-        sourceType: c.sourceType ?? 'file',
-        title: c.title ?? 'Knowledge Source',
-        similarity: c.score,
-        snippet: (c.text || '').slice(0, 200),
-      }));
-
-      if (chunks.length === 0) {
-        return { success: false, error: 'no_relevant_chunks', question };
-      }
-
-      // Build a short suggestion prompt
-      const ctxBlock = chunks.map((c: any, i: number) =>
-        `[${i + 1}${c.title ? ` — ${c.title}` : ''}] ${c.text || ''}`
-      ).join('\n\n');
-      const prompt = `You are coaching a user during a live conversation. The user just heard/asked:
-
-"${question}"
-
-${transcriptContext ? `Recent transcript:\n${transcriptContext.slice(0, 800)}\n\n` : ''}Reference context from the active client's knowledge base:
-${ctxBlock}
-
-Write a SHORT (1-3 sentence) suggested follow-up the user could say next, grounded in the reference context. Be direct, conversational, and natural. Do not include citations, footnotes, or preamble — just the words they could say.`;
-
-      const llmHelper = appState.processingHelper.getLLMHelper();
-      const suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
-
-      // Send to all renderer windows so SuggestionOverlay picks it up
-      const { BrowserWindow } = require('electron');
-      BrowserWindow.getAllWindows().forEach((win: any) => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('suggestion-generated', {
-            question,
-            suggestion,
-            confidence: 0.8,
-            citations,
-          });
-        }
-      });
-
-      return { success: true, suggestion, citations };
+      const { runKbSuggest } = require('./rag/kbSuggest');
+      return await runKbSuggest({ question: params?.question, transcriptContext: params?.transcriptContext }, appState);
     } catch (error: any) {
       console.error('[IPC] kb:suggest failed:', error);
       return { success: false, error: error.message };
@@ -6494,6 +6433,39 @@ Write a SHORT (1-3 sentence) suggested follow-up the user could say next, ground
     }
   });
 
+  // Custom vocabulary / proper nouns / attendee names → Whisper prompt_ids.
+  // The value is trimmed to 8000 chars by LocalWhisperSTT.setContext.
+  // Live meetings: the change applies to the NEXT transcribe; in-flight
+  // ones continue with the previous prompt cache. Safe to call mid-meeting.
+  safeHandle('local-whisper-set-context-prompt', async (_event: any, prompt: string) => {
+    try {
+      const trimmed = (typeof prompt === 'string' ? prompt : '').trim();
+      SettingsManager.getInstance().set('whisperContextPrompt', trimmed);
+      // If AppState exposes an active STT provider, push the new prompt
+      // eagerly. createSTTProvider also reads the key on next construction,
+      // so this is belt-and-braces.
+      try {
+        const appState = AppState.getInstance();
+        const sttState = (appState as any).getActiveSttProvider?.() ?? null;
+        if (sttState && typeof sttState.setContext === 'function') {
+          sttState.setContext(trimmed);
+        }
+      } catch { /* not fatal — next meeting will pick it up */ }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('local-whisper-get-context-prompt', async () => {
+    try {
+      const prompt = SettingsManager.getInstance().get('whisperContextPrompt') ?? '';
+      return { prompt: typeof prompt === 'string' ? prompt : '' };
+    } catch (e: any) {
+      return { success: false, error: e.message, prompt: '' };
+    }
+  });
+
   // In-app recovery path for "app crashed after I selected model X and now
   // won't open" scenarios. Resets the active model to the safe fallback
   // (Xenova/whisper-tiny.en, always present in MODEL_CATALOG_IDS) and clears
@@ -9171,6 +9143,32 @@ Write a SHORT (1-3 sentence) suggested follow-up the user could say next, ground
       return { enabled: enabled === true };
     } catch (error: any) {
       return { enabled: false, error: error.message };
+    }
+  });
+
+  // Toggle for whether kb:ask injects a <live_transcript> block from the
+  // current meeting's rolling context. Default ON. Persisted via SettingsManager
+  // so it survives app restarts. (Phase 7: real-time audio subscription.)
+  safeHandle('chat:set-live-transcript', async (_e, enabled: boolean) => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const valid = Boolean(enabled);
+      SettingsManager.getInstance().set('chatLiveTranscript', valid);
+      const rag = appState.getRAGManager?.();
+      rag?.setLiveTranscriptInjectionEnabled?.(valid);
+      return { success: true, enabled: valid };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('chat:get-live-transcript', async () => {
+    try {
+      const { SettingsManager } = require('./services/SettingsManager');
+      const enabled = SettingsManager.getInstance().get('chatLiveTranscript');
+      return { enabled: enabled !== false }; // default ON
+    } catch (error: any) {
+      return { enabled: true, error: error.message };
     }
   });
 

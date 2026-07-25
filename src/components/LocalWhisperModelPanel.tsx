@@ -132,10 +132,13 @@ export function LocalWhisperModelPanel() {
     const [recoveryNotice, setRecoveryNotice] = useState<RecoveryNotice | null>(null);
     const [onnxNotices, setOnnxNotices] = useState<Partial<Record<OnnxRecoveryNotice['family'], OnnxRecoveryNotice>>>({});
     const [loading, setLoading] = useState(true);
+    const [contextPrompt, setContextPrompt] = useState('');
+    const [contextPromptLoaded, setContextPromptLoaded] = useState(false);
+    const contextPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const loadData = useCallback(async () => {
         try {
-            const [modelsRes, hwRes, cfgRes, stateRes, noticeRes, intentRes, embedRes, rerankRes] = await Promise.all([
+            const [modelsRes, hwRes, cfgRes, stateRes, noticeRes, intentRes, embedRes, rerankRes, ctxRes] = await Promise.all([
                 electronAPI?.localWhisperGetModels?.(),
                 electronAPI?.localWhisperGetHardware?.(),
                 electronAPI?.localWhisperGetChannelConfig?.(),
@@ -153,12 +156,20 @@ export function LocalWhisperModelPanel() {
                 electronAPI?.onnxGetRecoveryNotice?.('intent').catch(() => null),
                 electronAPI?.onnxGetRecoveryNotice?.('embeddings').catch(() => null),
                 electronAPI?.onnxGetRecoveryNotice?.('reranker').catch(() => null),
+                // Custom vocabulary / hot words — biases Whisper's decoder
+                // toward proper nouns, jargon, and attendee names. Persisted
+                // via electron/main.ts → SettingsManager.
+                electronAPI?.localWhisperGetContextPrompt?.().catch(() => ({ prompt: '' })),
             ]);
 
             if (modelsRes) setModels(modelsRes.models ?? []);
             if (hwRes) setHardware(hwRes);
             if (cfgRes) setConfig(cfgRes);
             if (noticeRes?.recovered) setRecoveryNotice(noticeRes);
+            if (ctxRes && typeof ctxRes.prompt === 'string') {
+                setContextPrompt(ctxRes.prompt);
+                setContextPromptLoaded(true);
+            }
 
             // Merge the three family-keyed notices into a single keyed object
             // so the chips render in a deterministic order. A `null` from the
@@ -242,6 +253,25 @@ export function LocalWhisperModelPanel() {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    // Debounced save of the custom-vocabulary prompt. Typing in the textarea
+    // fires onChange every keystroke; we don't want to spam the IPC + worker
+    // `setContext` for every char. 600ms is "user paused typing" without
+    // feeling unresponsive. The trim happens at the IPC handler.
+    const handleContextPromptChange = useCallback((value: string) => {
+        setContextPrompt(value);
+        if (!contextPromptLoaded) return; // wait for initial load
+        if (contextPromptTimerRef.current) clearTimeout(contextPromptTimerRef.current);
+        contextPromptTimerRef.current = setTimeout(() => {
+            electronAPI?.localWhisperSetContextPrompt?.(value).catch(() => {});
+        }, 600);
+    }, [contextPromptLoaded]);
+
+    useEffect(() => {
+        return () => {
+            if (contextPromptTimerRef.current) clearTimeout(contextPromptTimerRef.current);
+        };
+    }, []);
 
     // Handle downloads
     useEffect(() => {
@@ -470,6 +500,9 @@ export function LocalWhisperModelPanel() {
                                         {isRecommended && (
                                             <span className="px-1.5 py-0.5 rounded-[4px] bg-accent-primary/10 text-accent-primary text-[9px] font-bold uppercase tracking-wider">{t('Recommended')}</span>
                                         )}
+                                        {model.multilingual && (
+                                            <span className="px-1.5 py-0.5 rounded-[4px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[9px] font-bold uppercase tracking-wider">Hindi / Multi</span>
+                                        )}
                                         {model.requiresAppleSilicon && (
                                             <span className="px-1.5 py-0.5 rounded-[4px] bg-purple-500/10 text-purple-500 text-[9px] font-bold uppercase tracking-wider">Apple Silicon</span>
                                         )}
@@ -553,6 +586,29 @@ export function LocalWhisperModelPanel() {
                     </p>
                 </div>
             )}
+
+            {/* ── Custom vocabulary / hot words ──
+                Biases Whisper's decoder toward proper nouns, jargon, and
+                attendee names. Without this, Whisper mishears uncommon
+                tokens ("Medhavee" → "Med have y"). Set once via the
+                textarea; the change is debounced (600ms) and pushed to the
+                active worker via electronAPI.localWhisperSetContextPrompt. */}
+            <div className="mt-4 pt-4 border-t border-border-secondary">
+                <label htmlFor="whisper-context-prompt" className="block text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-1.5">
+                    Custom vocabulary / Speaker names
+                </label>
+                <textarea
+                    id="whisper-context-prompt"
+                    value={contextPrompt}
+                    onChange={(e) => handleContextPromptChange(e.target.value)}
+                    placeholder="e.g. Medhavee Singh, Natively, Smith Will, probate, deed, retainer agreement"
+                    rows={3}
+                    className="w-full px-3 py-2 text-xs rounded-md border border-border-secondary bg-bg-primary text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-blue-500/40 resize-none"
+                />
+                <p className="mt-1.5 text-[10px] text-text-tertiary leading-relaxed">
+                    Comma-separated names, jargon, or phrases. Whisper's decoder is biased toward these — improves accuracy for proper nouns and domain terms.
+                </p>
+            </div>
         </div>
     );
 }

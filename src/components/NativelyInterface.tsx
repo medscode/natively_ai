@@ -176,6 +176,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import MeetingChatPanel from './MeetingChatPanel';
+import SuggestionOverlay from './SuggestionOverlay';
 import { useResolvedTheme } from '../hooks/useResolvedTheme';
 import { genMessageId } from '../utils/messageId';
 import { mapLanguageForPrism, isBlockCode } from '../utils/prismLanguage';
@@ -6604,6 +6605,17 @@ Provide only the answer, nothing else.`;
         onClose={() => setIsMeetingPanelOpen(false)}
         initialQuery={inputValue}
     />
+
+    {/* Live Suggestion Overlay — restores the upstream Natively live-transcript +
+        suggestion card UX. Self-shows when native audio connects / transcripts
+        arrive / suggestions emit. Anchored bottom-left so it doesn't fight the
+        Copilot floating button (top-right). */}
+    <div
+        className="fixed bottom-3 left-3 z-50 max-w-[360px] pointer-events-auto"
+        style={{ pointerEvents: 'auto' }}
+    >
+        <SuggestionOverlay />
+    </div>
 
     {/* Floating "Open Meeting Copilot" button — visible top-right when this chat
         surface is mounted. Click to open the redesigned panel. */}

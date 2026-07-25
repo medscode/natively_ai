@@ -267,43 +267,66 @@ parentPort.on('message', async (msg: any) => {
     try {
       let language: string | null = LANG_MAP[msg.language] ?? null;
       const streaming: boolean = !!msg.streaming;
+      const isEnglishOnly = ENGLISH_ONLY_MODELS.has(loadedModelId);
 
       // English-only checkpoints (Distil-Whisper + .en variants) have no
-      // multilingual decoder. Force language='english' regardless of the
-      // user's auto/non-English setting so the model isn't asked to
-      // transcribe phonetically into the wrong language.
-      if (ENGLISH_ONLY_MODELS.has(loadedModelId)) {
-        language = 'english';
+      // multilingual decoder. Transformers.js rejects `task` or `language`
+      // params for these models with "Cannot specify `task` or `language`
+      // for an English-only model". Drop BOTH params — the model is English
+      // by definition, no need to force a language string.
+      if (isEnglishOnly) {
+        language = null;
       }
 
       // Streaming partial passes use deterministic settings so consecutive
       // overlapping windows are stable enough for LocalAgreement-2 to
-      // converge on a committed prefix. Final passes also disable
-      // condition_on_previous_text + add Whisper's standard fallback
-      // thresholds to suppress repetition loops on long segments.
+      // converge on a committed prefix. Final passes use a different set of
+      // params tuned for accuracy: condition_on_previous_text is enabled so
+      // the decoder leverages state across the full segment, and the
+      // no-speech / compression-ratio / logprob thresholds are tightened to
+      // suppress the two main hallucination modes (repetition loops on quiet
+      // audio, and low-confidence trailing words).
+      //
+      // `task` is set ONLY for multilingual models — same reason as above.
       const opts: any = streaming
         ? {
             sampling_rate: 16000,
-            task: 'transcribe',
             temperature: 0,
+            // Streaming uses Whisper's default 0.6 — tighter gates on
+            // partials cause flicker (text appears, then disappears when
+            // the next partial gates it out). The final pass is the one
+            // that commits or rejects.
             no_speech_threshold: 0.6,
-            // Whisper's anti-loop check — drops outputs whose token gzip
-            // ratio exceeds 2.4 (typical of "thank you. thank you. thank
-            // you..." hallucinations on near-silent windows). Final pass
-            // uses the same threshold; streaming should match for
-            // consistency in what reaches the user.
             compression_ratio_threshold: 2.4,
             condition_on_previous_text: false,
             return_timestamps: false,
           }
         : {
             sampling_rate: 16000,
-            task: 'transcribe',
-            condition_on_previous_text: false,
-            compression_ratio_threshold: 2.4,
-            logprob_threshold: -1.0,
-            no_speech_threshold: 0.6,
+            temperature: 0,
+            // Enable cross-sentence conditioning ONLY on finals. With it
+            // off, the decoder re-decodes each segment from scratch and
+            // loses coherence across sentence boundaries ("the meeting is
+            // . the meeting is . the meeting is"). With it on, the
+            // decoder leverages its previous output for the current chunk.
+            // Safe on finals because the final pass runs once per segment
+            // (no flapping).
+            condition_on_previous_text: true,
+            // Tighten Whisper's anti-loop gate from 2.4 → 2.0. Catches
+            // "I am a big player I am a big player" repetitions on
+            // near-silent segments that slip past 2.4.
+            compression_ratio_threshold: 2.0,
+            // Reject low-confidence trailing words. Whisper's default is
+            // −1.0 (very permissive); −0.5 trims hallucinations without
+            // chopping real words on typical speech.
+            logprob_threshold: -0.5,
+            // Lower threshold so quiet speakers aren't gated as silence.
+            // 0.6 was the streaming default; 0.4 lets the model attempt
+            // transcription on lower-energy audio that would otherwise be
+            // skipped.
+            no_speech_threshold: 0.4,
           };
+      if (!isEnglishOnly) opts.task = 'transcribe';
       if (language) opts.language = language;
 
       // Use the pre-tokenized prompt cache populated by setPrompt messages.

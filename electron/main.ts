@@ -128,6 +128,13 @@ try {
  * This is the "build flag" half of the auto-install gate — see canAutoInstall().
  */
 let _cachedSignedBuild: boolean | null = null
+
+// Live KB-suggestion rate limit (auto-fired from the STT interviewer-final hook).
+// At most 1 fire per LIVE_SUGGEST_COOLDOWN_MS, and skip identical back-to-back
+// questions so we don't query the KB twice for the same turn.
+const LIVE_SUGGEST_COOLDOWN_MS = 4000;
+let _lastLiveSuggestAt = 0;
+let _lastLiveSuggestQ = '';
 function isSignedBuild(): boolean {
   if (_cachedSignedBuild !== null) return _cachedSignedBuild
   try {
@@ -2016,6 +2023,7 @@ export class AppState {
             providerDataScopes
         });
         this.ragManager.setLLMHelper(this.processingHelper.getLLMHelper());
+        this.ragManager.setIntelligenceManager(this.intelligenceManager);
 
         // Initialize Meeting Copilot Knowledge Base Manager
         try {
@@ -2727,7 +2735,7 @@ export class AppState {
     } else if (sttProvider === 'local-whisper') {
       const { LocalWhisperSTT } = require('./audio/LocalWhisperSTT');
       const sm = SettingsManager.getInstance();
-      const globalModel = sm.get('localWhisperModel') ?? 'Xenova/whisper-tiny.en';
+      const globalModel = sm.get('localWhisperModel') ?? 'Xenova/whisper-tiny';
       // Per-channel override: when enabled the two STT instances may load
       // different models (e.g. Moonshine Tiny for mic, Moonshine Base for
       // system audio). Falls back to globalModel if the per-channel slot is
@@ -2743,6 +2751,15 @@ export class AppState {
       const lws = new LocalWhisperSTT(modelId);
       // Channel label disambiguates the two concurrent instances in latency logs.
       lws.setChannel(speaker === 'interviewer' ? 'system' : 'mic');
+      // Bias the Whisper decoder toward user-supplied proper nouns, jargon,
+      // and attendee names. Without this, Whisper hallucinates phonetically
+      // similar tokens ("Medhavee" → "Med have y"). The prompt is set once
+      // here and re-pushed if the user updates it via Settings (see
+      // ipcHandlers settings:set:whisperContextPrompt).
+      const contextPrompt = (sm.get('whisperContextPrompt') ?? '').toString();
+      if (contextPrompt) {
+        lws.setContext(contextPrompt);
+      }
       stt = lws as any;
     } else {
       stt = new GoogleSTT(speaker);
@@ -2807,6 +2824,43 @@ export class AppState {
         }
         if (trackerFeedAllowed) {
           this.knowledgeOrchestrator?.feedInterviewerUtterance?.(segment.text);
+        }
+      }
+
+      // Live KB-grounded suggestion on interviewer finals: pull last 60s of
+      // transcript as context, hand the latest question to `kb:suggest` (which
+      // queries the active client case's KB + broadcasts `suggestion-generated`
+      // to all renderer windows). No-op when no active case is set, when the
+      // rate-limit gate skips, or when the question hasn't changed since the
+      // last fire. Manual triggers (Sparkles button, ••• More menu) still call
+      // `kb:suggest` through their own paths.
+      if (segment.isFinal && speaker === 'interviewer' && this.isMeetingActive) {
+        const q = (segment.text || '').trim();
+        if (q.length >= 8) {
+          const now = Date.now();
+          const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+          if (now - _lastLiveSuggestAt < LIVE_SUGGEST_COOLDOWN_MS) return;
+          if (norm(q) === norm(_lastLiveSuggestQ)) return;
+          _lastLiveSuggestAt = now;
+          _lastLiveSuggestQ = q;
+          try {
+            const { runKbSuggest } = require('./rag/kbSuggest');
+            const ctxItems = (this.intelligenceManager as any)?.getContext?.(60) || [];
+            const transcriptContext = ctxItems
+              .map((i: any) => (i && typeof i.text === 'string') ? `${i.role || 'speaker'}: ${i.text}` : '')
+              .filter(Boolean)
+              .join('\n')
+              .slice(0, 1500);
+            runKbSuggest({ question: q, transcriptContext }, this)
+              .then((result: any) => {
+                if (!result?.success && result?.error !== 'no_active_client_case') {
+                  console.warn('[live-suggestion] kb:suggest failed:', result?.error);
+                }
+              })
+              .catch((err: any) => console.warn('[live-suggestion] auto-trigger failed:', err?.message || err));
+          } catch (err: any) {
+            console.warn('[live-suggestion] require/runKbSuggest failed:', err?.message || err);
+          }
         }
       }
     });
@@ -5237,6 +5291,11 @@ export class AppState {
     // the new in-flight-audio-init await below yields the event loop.
     this._endMeetingInFlight = true;
     console.log('[Main] Ending Meeting...');
+
+    // Reset the live-suggestion rate limit so the next meeting can fire
+    // immediately, regardless of how recently the previous meeting fired.
+    _lastLiveSuggestAt = 0;
+    _lastLiveSuggestQ = '';
 
     // Phase 6 — meeting_stop telemetry. Emit BEFORE any teardown so a crash
     // in stop logic still records the stop event.

@@ -87,6 +87,10 @@ export interface AppSettings {
     localWhisperPerChannelEnabled?: boolean;
     localWhisperModelMic?: string;
     localWhisperModelSystem?: string;
+    // Custom vocabulary / proper nouns / attendee names biased into Whisper's
+    // decoder via `prompt_ids`. Comma-separated. Empty = no biasing.
+    // Truncated to 8000 chars by LocalWhisperSTT.setContext.
+    whisperContextPrompt?: string;
     // Phase 6 — TelemetryService toggle. Defaults to true (local-only JSONL).
     // When false, no telemetry is written to disk and no sinks fire.
     telemetryEnabled?: boolean;
