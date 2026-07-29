@@ -21,7 +21,13 @@ const dbManagerSrc = read('electron/db/DatabaseManager.ts');
 const editorSrc = read('electron/services/knowledge/OkfCardEditor.ts');
 const retrieverSrc = read('electron/services/knowledge/OkfRetriever.ts');
 const storeSrc = read('electron/services/knowledge/KnowledgePackStore.ts');
-const modesSettingsSrc = read('premium/src/ModesSettings.tsx');
+// `premium/` is a private submodule that is NOT checked out in open-source CI
+// (see .gitmodules). Read it lazily and skip the assertions that need it rather
+// than throwing at import time and taking the whole file down with it.
+const PREMIUM_MODES_SETTINGS = path.join(repoRoot, 'premium/src/ModesSettings.tsx');
+const premiumAvailable = fs.existsSync(PREMIUM_MODES_SETTINGS);
+const premiumGuard = { skip: premiumAvailable ? false : 'premium submodule not checked out' };
+const modesSettingsSrc = premiumAvailable ? read('premium/src/ModesSettings.tsx') : '';
 
 test('DatabaseManager: migration v20 -> v21 adds knowledge_card_versions table', () => {
   assert.match(dbManagerSrc, /Applying migration v20 → v21: Add knowledge_card_versions table/);
@@ -90,13 +96,13 @@ test('ipcHandlers: all 5 handlers are gated behind isOkfUserEditableCardsEnabled
   }
 });
 
-test('ModesSettings.tsx: approve/reject buttons are gated behind userEditableCardsEnabled prop', () => {
+test('ModesSettings.tsx: approve/reject buttons are gated behind userEditableCardsEnabled prop', premiumGuard, () => {
   assert.match(modesSettingsSrc, /userEditableCardsEnabled && \(/);
   assert.match(modesSettingsSrc, /onApproveCard: \(cardId: string\) => void/);
   assert.match(modesSettingsSrc, /onRejectCard: \(cardId: string\) => void/);
 });
 
-test('ModesSettings.tsx: rejected cards render with reduced opacity and strikethrough title', () => {
+test('ModesSettings.tsx: rejected cards render with reduced opacity and strikethrough title', premiumGuard, () => {
   assert.match(modesSettingsSrc, /opacity: card\.approvalStatus === 'rejected' \? 0\.5 : 1/);
   assert.match(modesSettingsSrc, /textDecoration: card\.approvalStatus === 'rejected' \? 'line-through' : 'none'/);
 });

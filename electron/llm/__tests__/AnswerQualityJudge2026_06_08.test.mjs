@@ -7,13 +7,20 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // The judge lives in benchmarks/ (TS) — node v25 strips types on import.
-const { judgeAnswerDeterministic } = await import(
-  pathToFileURL(path.resolve(__dirname, '../../../benchmarks/profile-intelligence/answer_quality_judge.ts')).href
-);
+// `benchmarks/` is GITIGNORED (.gitignore), so it does not exist in a clean
+// checkout or in CI. Import it conditionally and skip rather than throwing at
+// module scope, which would fail the whole file.
+const JUDGE_PATH = path.resolve(__dirname, '../../../benchmarks/profile-intelligence/answer_quality_judge.ts');
+const judgeMod = fs.existsSync(JUDGE_PATH)
+  ? await import(pathToFileURL(JUDGE_PATH).href)
+  : null;
+const judgeAnswerDeterministic = judgeMod?.judgeAnswerDeterministic;
+const benchmarksGuard = { skip: judgeMod ? false : 'benchmarks/ not present (gitignored)' };
 
 const J = (answer, opts = {}) => judgeAnswerDeterministic({
   question: opts.question || 'why should we hire you', answer,
@@ -22,7 +29,7 @@ const J = (answer, opts = {}) => judgeAnswerDeterministic({
   firstUsefulMs: opts.firstUsefulMs,
 });
 
-describe('rewards a strong, speakable candidate answer', () => {
+describe('rewards a strong, speakable candidate answer', benchmarksGuard, () => {
   test('grounded, confident, concise first-person → excellent (>=4)', () => {
     const s = J('I bring three years of backend engineering with Python and SQL, and I have shipped low-latency data pipelines end to end. I move fast and own outcomes.');
     assert.ok(s.overall_human_quality_score >= 4, `got ${s.overall_human_quality_score}`);
@@ -31,7 +38,7 @@ describe('rewards a strong, speakable candidate answer', () => {
   });
 });
 
-describe('penalizes the real defects', () => {
+describe('penalizes the real defects', benchmarksGuard, () => {
   test('assistant-meta in a candidate answer → wrong_voice / not_speakable, low speakability', () => {
     const s = J('As an AI assistant, the candidate is probably a good fit, maybe.');
     assert.ok(s.speakability_score <= 3);
@@ -73,7 +80,7 @@ describe('penalizes the real defects', () => {
   });
 });
 
-describe('respects style + answer-type length budgets', () => {
+describe('respects style + answer-type length budgets', benchmarksGuard, () => {
   test('a detailed coding answer is NOT penalized for length', () => {
     const long = 'First, we use a hash map to store seen values. '.repeat(15);
     const s = J(long, { answerType: 'coding_question_answer', voice: 'assistant_explanation', style: 'detailed', question: 'explain two sum in detail' });

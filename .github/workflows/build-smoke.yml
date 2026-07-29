@@ -56,6 +56,12 @@ jobs:
       - name: Run intelligence unit tests
         run: npm run test:intelligence
 
+      # DB tests link against better-sqlite3, which postinstall rebuilds for the
+      # ELECTRON ABI — plain `node --test` cannot load those bindings. They run
+      # under ELECTRON_RUN_AS_NODE=1 (no GUI, no display needed).
+      - name: Run database unit tests (Electron ABI)
+        run: npm run test:db
+
   api-smoke:
     # Runs weekly (Monday 09:00 UTC) and on demand via workflow_dispatch.
     # Requires secrets: NATIVELY_API_KEY (or NATIVELY_TRIAL_TOKEN) set in repo.

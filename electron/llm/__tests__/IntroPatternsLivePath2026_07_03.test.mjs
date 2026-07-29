@@ -15,12 +15,13 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
-const src = fs.readFileSync(path.join(repoRoot, 'premium/electron/knowledge/ContextAssembler.ts'), 'utf8');
+import { premiumGuard, readPremium } from '../../test/premiumSubmodule.mjs';
+const src = readPremium('premium/electron/knowledge/ContextAssembler.ts');
 const m = src.match(/const INTRO_PATTERNS = \[([\s\S]*?)\];/);
-const patterns = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+const patterns = m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]) : [];
 const isIntro = (q) => patterns.some((p) => q.toLowerCase().includes(p));
 
-describe('ContextAssembler INTRO_PATTERNS — live intro phrasings', () => {
+describe('ContextAssembler INTRO_PATTERNS — live intro phrasings', premiumGuard, () => {
   for (const q of [
     'Great to meet you. To start, could you give us a quick self-introduction?',
     'Could you start by giving a brief introduction of yourself?',

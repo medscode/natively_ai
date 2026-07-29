@@ -18,10 +18,67 @@ import { parentPort } from 'worker_threads';
 import { WhisperProgressAggregator } from './whisperProgressAggregator';
 import { getBoundedOnnxSessionOptions } from '../../utils/onnxThreadConfig';
 
+/**
+ * Maps the persisted STT language key onto a Whisper decoder language name.
+ *
+ * The KEYS here must match what SettingsManager actually stores, which is the
+ * INTERNAL key from electron/config/languages.ts RECOGNITION_LANGUAGES
+ * ('hindi', 'english-us', 'auto', …) — the same key the UI language picker
+ * round-trips via getRecognitionLanguages()/setRecognitionLanguage().
+ *
+ * This map previously keyed off BCP-47 codes ('hi-IN', 'en-US', …), which are
+ * the `bcp47` FIELD of those entries and never the key. Every lookup therefore
+ * missed, fell through to `?? null`, and silently ran the decoder on
+ * auto-detect no matter what the user selected — auto-detect on short VAD
+ * segments is unreliable and was the cause of poor non-English accuracy.
+ * The bcp47 aliases are retained below so any older persisted value, or a
+ * caller that passes a BCP-47 code directly, still resolves.
+ */
 const LANG_MAP: Record<string, string | null> = {
   'auto': null,
+
+  // ── Canonical RECOGNITION_LANGUAGES keys (what Settings persists) ───────
+  'english-us': 'english',
+  'english-uk': 'english',
+  'english-in': 'english',
+  'english-au': 'english',
+  'english-ca': 'english',
+  'arabic': 'arabic',
+  'bulgarian': 'bulgarian',
+  'chinese': 'chinese',
+  'czech': 'czech',
+  'danish': 'danish',
+  'dutch': 'dutch',
+  'finnish': 'finnish',
+  'french': 'french',
+  'german': 'german',
+  'greek': 'greek',
+  'hebrew': 'hebrew',
+  'hindi': 'hindi',
+  'hungarian': 'hungarian',
+  'indonesian': 'indonesian',
+  'italian': 'italian',
+  'japanese': 'japanese',
+  'korean': 'korean',
+  'malay': 'malay',
+  'norwegian': 'norwegian',
+  'polish': 'polish',
+  'portuguese': 'portuguese',
+  'romanian': 'romanian',
+  'russian': 'russian',
+  'spanish': 'spanish',
+  'swedish': 'swedish',
+  'thai': 'thai',
+  'turkish': 'turkish',
+  'ukrainian': 'ukrainian',
+  'vietnamese': 'vietnamese',
+
+  // ── Legacy/BCP-47 aliases (back-compat; not what the picker stores) ─────
   'en-US': 'english',
   'en-GB': 'english',
+  'en-IN': 'english',
+  'en-AU': 'english',
+  'en-CA': 'english',
   'fr-FR': 'french',
   'de-DE': 'german',
   'es-ES': 'spanish',

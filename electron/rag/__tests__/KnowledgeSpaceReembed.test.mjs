@@ -18,11 +18,12 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const kdbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js');
 const esPath = path.resolve(__dirname, '../../../dist-electron/electron/rag/embeddingSpace.js');
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
 const { embeddingSpaceKey } = await import(pathToFileURL(esPath).href);
 
 const SPACE_V1 = embeddingSpaceKey({ name: 'gemini', model: 'gemini-embedding-001', dimensions: 768 });
@@ -30,7 +31,7 @@ const SPACE_V2 = embeddingSpaceKey({ name: 'gemini', model: 'gemini-embedding-2'
 
 function vec(fill) { return new Array(768).fill(fill); }
 
-describe('Knowledge base embedding-space (real KnowledgeDatabaseManager)', () => {
+describe('Knowledge base embedding-space (real KnowledgeDatabaseManager)', premiumDistGuard, () => {
   let db, kdb;
 
   beforeEach(() => {

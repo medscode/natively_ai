@@ -35,10 +35,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { premiumGuard, readPremium } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const orchSrc = readFileSync(
-  path.resolve(__dirname, '../../../premium/electron/knowledge/KnowledgeOrchestrator.ts'), 'utf8');
+const orchSrc = readPremium('premium/electron/knowledge/KnowledgeOrchestrator.ts');
 const cardSrc = readFileSync(
   path.resolve(__dirname, '../../services/knowledge/ProfileCardTemplates.ts'), 'utf8');
 const typesSrc = readFileSync(
@@ -70,7 +70,7 @@ describe('RC6: leadership[] is carded at ingestion', () => {
   });
 });
 
-describe('RC6: the deterministic runtime pack surfaces leadership for org-named questions', () => {
+describe('RC6: the deterministic runtime pack surfaces leadership for org-named questions', premiumGuard, () => {
   test('buildStructuredCategoryPack emits leadership when the question names the org, not only on the "leadership" keyword', () => {
     const fn = orchSrc.slice(
       orchSrc.indexOf('private buildStructuredCategoryPack'),

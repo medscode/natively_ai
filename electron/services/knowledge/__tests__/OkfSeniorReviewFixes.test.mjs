@@ -44,6 +44,12 @@ import fs from 'node:fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../../..');
 const distRoot = path.join(repoRoot, 'dist-electron', 'electron');
+// Tracked fixture (see OkfPhase2KnowledgePacks) — the untracked repo-root copy
+// is kept as a fallback for devs who have it.
+const PDF_PATH = [
+  path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf'),
+  path.join(repoRoot, 'Sample thesis for testing.pdf'),
+].find((p) => fs.existsSync(p)) ?? path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf');
 const read = (rel) => fs.readFileSync(path.join(repoRoot, rel), 'utf8');
 
 async function loadModule(relPath) {
@@ -116,7 +122,7 @@ test('OkfVerifier: real thesis extraction still accepts 50/51 cards after the pe
   const { createRequire } = await import('node:module');
   const require = createRequire(import.meta.url);
   const { PDFParse } = require('pdf-parse');
-  const data = await new PDFParse({ data: fs.readFileSync(path.join(repoRoot, 'Sample thesis for testing.pdf')) }).getText();
+  const data = await new PDFParse({ data: fs.readFileSync(PDF_PATH) }).getText();
   const content = data.pages.map((p) => `[Page ${p.num}]\n${p.text || ''}`).join('\n\n');
   const { cards: cardDrafts } = extractFromContent(content, 'thesis');
   let cards = buildKnowledgeCards(cardDrafts, { packId: 'p', sourceId: 's', sourceChecksum: 'c', nowIso: new Date().toISOString() });
@@ -268,7 +274,7 @@ test('GraphExtractor: real thesis still extracts the expected OpenVLA-OFT extend
   const { createRequire } = await import('node:module');
   const require = createRequire(import.meta.url);
   const { PDFParse } = require('pdf-parse');
-  const data = await new PDFParse({ data: fs.readFileSync(path.join(repoRoot, 'Sample thesis for testing.pdf')) }).getText();
+  const data = await new PDFParse({ data: fs.readFileSync(PDF_PATH) }).getText();
   const content = data.pages.map((p) => `[Page ${p.num}]\n${p.text || ''}`).join('\n\n');
   const { cards: cardDrafts, entities: entityDrafts } = extractFromContent(content, 'thesis');
   let cards = buildKnowledgeCards(cardDrafts, { packId: 'p', sourceId: 's', sourceChecksum: 'c', nowIso: new Date().toISOString() });

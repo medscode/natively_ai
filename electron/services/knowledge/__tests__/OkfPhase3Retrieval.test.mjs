@@ -14,7 +14,12 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../../..');
 const distRoot = path.join(repoRoot, 'dist-electron', 'electron');
-const PDF_PATH = path.join(repoRoot, 'Sample thesis for testing.pdf');
+// Tracked fixture (see OkfPhase2KnowledgePacks) — the untracked repo-root copy
+// is kept as a fallback for devs who have it.
+const PDF_PATH = [
+  path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf'),
+  path.join(repoRoot, 'Sample thesis for testing.pdf'),
+].find((p) => fs.existsSync(p)) ?? path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf');
 
 async function loadModule(relPath) {
   return import(pathToFileURL(path.join(distRoot, relPath)).href);

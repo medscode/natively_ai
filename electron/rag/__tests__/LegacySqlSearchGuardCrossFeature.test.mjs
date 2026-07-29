@@ -24,6 +24,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const esPath = path.resolve(__dirname, '../../../dist-electron/electron/rag/embeddingSpace.js');
@@ -32,7 +33,7 @@ const kdbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron
 
 const ES = await import(pathToFileURL(esPath).href);
 const { VectorStore } = await import(pathToFileURL(vsPath).href);
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
 const { buildLegacySpaceCaseSql, legacySpaceForProvider, LEGACY_PROVIDER_MODEL, embeddingSpaceKey } = ES;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ describe('VectorStore search hard-guard (real compiled VectorStore, pure-SQL pat
 // ──────────────────────────────────────────────────────────────────────────
 // (7) Cross-feature isolation + local-only no-op
 // ──────────────────────────────────────────────────────────────────────────
-describe('Cross-feature: meetings RAG vs knowledge base do not interfere', () => {
+describe('Cross-feature: meetings RAG vs knowledge base do not interfere', premiumDistGuard, () => {
   test('separate tables: knowledge re-embed never reads/writes RAG meeting tables', () => {
     // Build BOTH schemas in one DB (worst case: shared file) and prove the knowledge
     // re-embed sweep only touches context_nodes.

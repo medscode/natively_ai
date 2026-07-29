@@ -22,12 +22,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { premiumGuard, readPremium } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const orchSrc = readFileSync(path.resolve(__dirname, '../../../premium/electron/knowledge/KnowledgeOrchestrator.ts'), 'utf8');
+const orchSrc = readPremium('premium/electron/knowledge/KnowledgeOrchestrator.ts');
 const retrieverSrc = readFileSync(path.resolve(__dirname, '../../services/ModeContextRetriever.ts'), 'utf8');
 
-describe('RC5: cloud query embed is budgeted on the hot path', () => {
+describe('RC5: cloud query embed is budgeted on the hot path', premiumGuard, () => {
   test('cloudQueryEmbedder wraps the raw fn in a Promise.race with QUERY_EMBED_BUDGET_MS', () => {
     const fn = orchSrc.slice(orchSrc.indexOf('private cloudQueryEmbedder'), orchSrc.indexOf('private resolveQueryEmbedder'));
     assert.match(fn, /QUERY_EMBED_BUDGET_MS = 300/);

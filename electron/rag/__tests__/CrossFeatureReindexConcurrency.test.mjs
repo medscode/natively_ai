@@ -29,6 +29,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const vsPath = path.resolve(__dirname, '../../../dist-electron/electron/rag/VectorStore.js');
@@ -41,8 +42,8 @@ const esPath = path.resolve(__dirname, '../../../dist-electron/electron/rag/embe
 const { VectorStore } = await import(pathToFileURL(vsPath).href);
 const { EmbeddingPipeline } = await import(pathToFileURL(epPath).href);
 const { RAGManager } = await import(pathToFileURL(rmPath).href);
-const { KnowledgeOrchestrator } = await import(pathToFileURL(koPath).href);
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
+const { KnowledgeOrchestrator } = await importPremiumDist(koPath);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
 const { embeddingSpaceKey } = await import(pathToFileURL(esPath).href);
 
 const SPACE_V1 = embeddingSpaceKey({ name: 'gemini', model: 'gemini-embedding-001', dimensions: 768 });
@@ -112,7 +113,7 @@ function makeKnowledge(db, { embedFn, activeSpaceFn }) {
   return orch;
 }
 
-describe('cross-feature: meetings reindex + knowledge re-embed concurrently (one DB)', () => {
+describe('cross-feature: meetings reindex + knowledge re-embed concurrently (one DB)', premiumDistGuard, () => {
   let db;
   beforeEach(() => { db = new Database(':memory:'); makeMeetingsSchema(db); });
   afterEach(() => { try { db.close(); } catch { /* */ } });

@@ -14,15 +14,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const koPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeOrchestrator.js');
 const kdbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js');
 const typesPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/types.js');
 
-const { KnowledgeOrchestrator } = await import(pathToFileURL(koPath).href);
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
-const { DocType } = await import(pathToFileURL(typesPath).href);
+const { KnowledgeOrchestrator } = await importPremiumDist(koPath);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
+const { DocType } = await importPremiumDist(typesPath);
 
 const CLOUD = 'gemini:gemini-embedding-2:768';
 const LOCAL = 'local:xenova/all-minilm-l6-v2:384';
@@ -42,7 +43,7 @@ function makeResumeFile() {
   return file;
 }
 
-describe('KnowledgeOrchestrator ingestion uses producer embedding space metadata', () => {
+describe('KnowledgeOrchestrator ingestion uses producer embedding space metadata', premiumDistGuard, () => {
   test('cloud→local fallback during ingest stamps saved nodes with local space, not pre-call active cloud space', async () => {
     const db = new Database(':memory:');
     try {

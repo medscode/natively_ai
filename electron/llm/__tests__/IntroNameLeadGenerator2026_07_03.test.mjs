@@ -14,9 +14,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
-const src = fs.readFileSync(path.join(repoRoot, 'premium/electron/knowledge/ContextAssembler.ts'), 'utf8');
+import { premiumGuard, readPremium } from '../../test/premiumSubmodule.mjs';
+const src = readPremium('premium/electron/knowledge/ContextAssembler.ts');
 
-describe('generateCandidateIntro leads with the candidate name', () => {
+describe('generateCandidateIntro leads with the candidate name', premiumGuard, () => {
   const fn = src.slice(src.indexOf('function generateCandidateIntro'), src.indexOf('function generateCandidateIntro') + 3400);
   test('the generation prompt requires opening with the name', () => {
     assert.match(fn, /OPEN WITH THE CANDIDATE'?S NAME/i, 'explicit name-lead rule present');

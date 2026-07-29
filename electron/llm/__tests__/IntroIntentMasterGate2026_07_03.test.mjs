@@ -19,12 +19,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { premiumGuard, readPremium } from '../../test/premiumSubmodule.mjs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
 
 const readPatterns = (rel) => {
-  const src = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  const src = readPremium(rel);
   const m = src.match(/INTRO_PATTERNS\s*=\s*\[([\s\S]*?)\]/);
+  if (!m) return [];
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 };
 
@@ -46,19 +49,19 @@ const NON_INTROS = [
   'How many years have you worked with Go?',
 ];
 
-describe('IntentClassifier INTRO_PATTERNS (master gate) covers live intros', () => {
+describe('IntentClassifier INTRO_PATTERNS (master gate) covers live intros', premiumGuard, () => {
   const f = isIntro(intentPatterns);
   for (const q of LIVE_INTROS) test(`INTRO: "${q.slice(0, 40)}…"`, () => assert.ok(f(q)));
   for (const q of NON_INTROS) test(`NOT: "${q.slice(0, 40)}…"`, () => assert.ok(!f(q)));
 });
 
-describe('ContextAssembler INTRO_PATTERNS covers live intros', () => {
+describe('ContextAssembler INTRO_PATTERNS covers live intros', premiumGuard, () => {
   const f = isIntro(assemblerPatterns);
   for (const q of LIVE_INTROS) test(`INTRO: "${q.slice(0, 40)}…"`, () => assert.ok(f(q)));
   for (const q of NON_INTROS) test(`NOT: "${q.slice(0, 40)}…"`, () => assert.ok(!f(q)));
 });
 
-describe('the two INTRO_PATTERNS lists stay in sync (drift WAS the bug)', () => {
+describe('the two INTRO_PATTERNS lists stay in sync (drift WAS the bug)', premiumGuard, () => {
   test('every live intro phrasing is matched by BOTH lists', () => {
     const a = isIntro(intentPatterns), b = isIntro(assemblerPatterns);
     for (const q of LIVE_INTROS) {

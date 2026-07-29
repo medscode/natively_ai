@@ -17,12 +17,13 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const koPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeOrchestrator.js');
 const kdbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js');
-const { KnowledgeOrchestrator } = await import(pathToFileURL(koPath).href);
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
+const { KnowledgeOrchestrator } = await importPremiumDist(koPath);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
 
 const CLOUD = 'gemini:gemini-embedding-2:768';
 const LOCAL = 'local:xenova/all-minilm-l6-v2:384';
@@ -50,7 +51,7 @@ function seed(db, title, space, fill = 0.1, dim = 768) {
   ).run(title, `content ${title}`, blob, space);
 }
 
-describe('ensureEmbeddingSpace degrade-to-local (MEDIUM-2)', () => {
+describe('ensureEmbeddingSpace degrade-to-local (MEDIUM-2)', premiumDistGuard, () => {
   let db;
   beforeEach(() => { db = new Database(':memory:'); });
   afterEach(() => db.close());

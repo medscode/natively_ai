@@ -38,8 +38,16 @@ test('HIGH: manual-path guard fails CLOSED when active-mode state is unknown (nu
   // The fail-closed variable exists and treats null mode as doc-grounded.
   assert.match(src, /const docGroundedOrUnknown = manualActiveMode == null/,
     'docGroundedOrUnknown treats null mode as doc-grounded');
-  assert.match(src, /!isCodingChat && answerPlan\.profileContextPolicy !== 'forbidden' && !docGroundedOrUnknown/,
-    'the retrieval guard consumes the fail-closed variable');
+  // Asserted per-condition rather than as one fixed conjunction: the guard has
+  // since been TIGHTENED with `!selectedProfileEvidence` and
+  // `ownershipAllowsProfileEvidence`, which a whole-expression match would fail
+  // even though the invariant this test exists to protect still holds.
+  const guardLine = src.split('\n').find((l) => /^\s*if \(.*!docGroundedOrUnknown/.test(l));
+  assert.ok(guardLine, 'the retrieval guard consumes the fail-closed variable');
+  assert.match(guardLine, /!isCodingChat/,
+    'the retrieval guard still gates on !isCodingChat');
+  assert.match(guardLine, /answerPlan\.profileContextPolicy !== 'forbidden'/,
+    "the retrieval guard still gates on profileContextPolicy !== 'forbidden'");
   // The retriever call passes the REAL doc-grounded state (gate 4 is live, not dead).
   assert.match(src, /documentGroundedActive: manualActiveMode\?\.documentGroundedCustomModeActive === true/,
     'documentGroundedActive is the real state, not a hardcoded false');

@@ -20,14 +20,15 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
+import { premiumDistGuard, importPremiumDist } from '../../test/premiumSubmodule.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const koPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeOrchestrator.js');
 const kdbPath = path.resolve(__dirname, '../../../dist-electron/premium/electron/knowledge/KnowledgeDatabaseManager.js');
 const esPath = path.resolve(__dirname, '../../../dist-electron/electron/rag/embeddingSpace.js');
 
-const { KnowledgeOrchestrator } = await import(pathToFileURL(koPath).href);
-const { KnowledgeDatabaseManager } = await import(pathToFileURL(kdbPath).href);
+const { KnowledgeOrchestrator } = await importPremiumDist(koPath);
+const { KnowledgeDatabaseManager } = await importPremiumDist(kdbPath);
 const { embeddingSpaceKey } = await import(pathToFileURL(esPath).href);
 
 const SPACE_V1 = embeddingSpaceKey({ name: 'gemini', model: 'gemini-embedding-001', dimensions: 768 });
@@ -65,7 +66,7 @@ function seedNode(db, { title, space, fill = 0.1, embedded = true }) {
   ).run(title, `content of ${title}`, '[]', blob, space);
 }
 
-describe('KnowledgeOrchestrator.ensureEmbeddingSpace (real compiled method + real DB)', () => {
+describe('KnowledgeOrchestrator.ensureEmbeddingSpace (real compiled method + real DB)', premiumDistGuard, () => {
   let db;
   beforeEach(() => { db = new Database(':memory:'); });
   afterEach(() => db.close());
@@ -191,7 +192,7 @@ describe('KnowledgeOrchestrator.ensureEmbeddingSpace (real compiled method + rea
   });
 });
 
-describe('KnowledgeOrchestrator._spaceGatedNodes (real compiled method)', () => {
+describe('KnowledgeOrchestrator._spaceGatedNodes (real compiled method)', premiumDistGuard, () => {
   let db;
   beforeEach(() => { db = new Database(':memory:'); });
   afterEach(() => db.close());
@@ -318,7 +319,7 @@ describe('KnowledgeOrchestrator._spaceGatedNodes (real compiled method)', () => 
   });
 });
 
-describe('KnowledgeOrchestrator.resolveQueryEmbedder space-gating (real compiled method)', () => {
+describe('KnowledgeOrchestrator.resolveQueryEmbedder space-gating (real compiled method)', premiumDistGuard, () => {
   let db;
   beforeEach(() => { db = new Database(':memory:'); });
   afterEach(() => db.close());

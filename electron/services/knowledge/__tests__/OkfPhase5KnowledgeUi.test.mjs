@@ -18,6 +18,14 @@ const ipcHandlersSrc = read('electron/ipcHandlers.ts');
 const preloadSrc = read('electron/preload.ts');
 const electronDtsSrc = read('src/types/electron.d.ts');
 
+// `premium/` is a private submodule that is NOT checked out in open-source CI
+// (see .gitmodules), so the assertions against it are skipped there.
+const premiumGuard = {
+  skip: fs.existsSync(path.join(repoRoot, 'premium/src/ModesSettings.tsx'))
+    ? false
+    : 'premium submodule not checked out',
+};
+
 test('ipcHandlers: registers knowledge:list-packs', () => {
   assert.match(ipcHandlersSrc, /safeHandle\('knowledge:list-packs'/);
 });
@@ -86,14 +94,14 @@ test('src/types/electron.d.ts: declares matching renderer types for the knowledg
   assert.match(electronDtsSrc, /knowledgeExportPack: \(fileId: string\) => Promise</);
 });
 
-test('premium/src/ModesSettings.tsx: KnowledgePanel UI is gated behind okfKnowledgeUiEnabled state read from getIntelligenceFlags', () => {
+test('premium/src/ModesSettings.tsx: KnowledgePanel UI is gated behind okfKnowledgeUiEnabled state read from getIntelligenceFlags', premiumGuard, () => {
   const src = read('premium/src/ModesSettings.tsx');
   assert.match(src, /getIntelligenceFlags\?\.\(\)/);
   assert.match(src, /f\.key === 'okfKnowledgeUi'/);
   assert.match(src, /okfKnowledgeUiEnabled && /);
 });
 
-test('premium/src/ModesSettings.tsx: defines a KnowledgePanel component with regenerate + export actions', () => {
+test('premium/src/ModesSettings.tsx: defines a KnowledgePanel component with regenerate + export actions', premiumGuard, () => {
   const src = read('premium/src/ModesSettings.tsx');
   assert.match(src, /const KnowledgePanel: React\.FC/);
   assert.match(src, /onRegenerate: \(\) => void/);

@@ -124,20 +124,27 @@ describe('catalog invariants', () => {
     assert.equal(MODEL_CATALOG_IDS.has('Xenova/whisper-tiny.enX'), false);
   });
 
-  test('distil-medium.en declares externalDataFormat (defensive audit fix)', () => {
-    // Per the fix spec: distil-medium.en may or may not self-declare in its
-    // own config.json — recording the layout in the catalog forces
-    // isModelCached to require the encoder_model.onnx_data companion,
-    // avoiding the "stub downloads, ORT aborts at file_size" failure mode
-    // that bit large-v3-turbo.
-    const ext = getModelExternalDataFormat('distil-whisper/distil-medium.en');
+  test('externalDataFormat is declared by exactly the external-data checkpoints', () => {
+    // This test previously asserted that distil-medium.en ALSO declares
+    // externalDataFormat, per the original audit spec. That assumption is
+    // wrong and the assertion never ran in CI (the whisper/__tests__ dir was
+    // outside the `npm test` globs), so it went unnoticed. Verified against
+    // the upstream repos: distil-medium.en ships a single-file
+    // onnx/encoder_model.onnx and has NO onnx/encoder_model.onnx_data (404),
+    // so declaring the companion here would make isModelCached require a file
+    // that can never exist — the model would read as permanently unavailable.
+    //
+    // The real invariant is the one below: the checkpoints that DO split their
+    // fp32 encoder weights into a sibling .onnx_data must declare it, and the
+    // single-file ones must not.
+    for (const id of ['distil-whisper/distil-large-v3', 'distil-whisper/distil-large-v2']) {
+      const ext = getModelExternalDataFormat(id);
+      assert.ok(ext && typeof ext === 'object', `${id} must declare externalDataFormat (object form)`);
+      assert.equal(ext['encoder_model.onnx'], true, `${id} externalDataFormat must include encoder_model.onnx: true`);
+    }
     assert.ok(
-      ext && typeof ext === 'object',
-      'distil-whisper/distil-medium.en must declare externalDataFormat (object form)',
-    );
-    assert.ok(
-      ext['encoder_model.onnx'] === true,
-      'distil-medium.en externalDataFormat must include encoder_model.onnx: true',
+      !getModelExternalDataFormat('distil-whisper/distil-medium.en'),
+      'distil-medium.en is a single-file checkpoint and must NOT declare externalDataFormat',
     );
   });
 });

@@ -20,7 +20,14 @@ import crypto from 'node:crypto';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../../..');
 const distRoot = path.join(repoRoot, 'dist-electron', 'electron');
-const PDF_PATH = path.join(repoRoot, 'Sample thesis for testing.pdf');
+// The thesis this suite asserts against is TRACKED at test-fixtures/ so CI can
+// run it. Historically it pointed at an untracked repo-root copy ("Sample thesis
+// for testing.pdf"), which is why this suite silently never ran in CI. That copy
+// is still honored as a fallback for devs who have it.
+const PDF_PATH = [
+  path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf'),
+  path.join(repoRoot, 'Sample thesis for testing.pdf'),
+].find((p) => fs.existsSync(p)) ?? path.join(repoRoot, 'test-fixtures/modes-corpus/thesis/institutional_thesis.pdf');
 
 async function loadModule(relPath) {
   return import(pathToFileURL(path.join(distRoot, relPath)).href);
