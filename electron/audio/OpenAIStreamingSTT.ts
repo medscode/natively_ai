@@ -19,6 +19,8 @@ import FormData from 'form-data';
 import { RECOGNITION_LANGUAGES } from '../config/languages';
 import { streamingStttWsOptions } from './dnsHelpers';
 import { OpenAITranscriptTurnCoalescer } from './openaiTranscriptTurnCoalescer';
+import { buildWhisperPrompt } from './whisper/contextPrompt';
+import { SettingsManager } from '../services/SettingsManager';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -435,7 +437,16 @@ export class OpenAIStreamingSTT extends EventEmitter {
 
             // Configure the transcription session
             // 'auto' key → empty string so Whisper/gpt-4o-transcribe auto-detects the language
-            const lang = (this.languageKey && this.languageKey !== 'auto')
+            //
+            // NOTE: The Realtime API session.update for gpt-4o-transcribe does
+            // NOT currently accept a `prompt` parameter, so we cannot bias
+            // vocabulary for Hinglish code-mixing on this WS path. The REST
+            // fallback (`_restUpload` below) injects `buildWhisperPrompt()` for
+            // 'hindi' / 'auto' languages. Users who need Hinglish verbatim
+            // transcription on OpenAI should pick a provider whose model
+            // accepts a prompt (Groq whisper-large-v3-turbo), or rely on the
+            // REST fallback if their session drops to it.
+            const lang = (this.languageKey && this.languageKey !== 'auto' && this.languageKey !== 'hindi')
                 ? (RECOGNITION_LANGUAGES[this.languageKey]?.iso639 ?? '')
                 : '';
 
@@ -1002,10 +1013,22 @@ export class OpenAIStreamingSTT extends EventEmitter {
         });
         form.append('model', 'whisper-1');
 
-        const lang = (this.languageKey && this.languageKey !== 'auto')
+        const lang = (this.languageKey && this.languageKey !== 'auto' && this.languageKey !== 'hindi')
             ? (RECOGNITION_LANGUAGES[this.languageKey]?.iso639 ?? '')
             : '';
         if (lang) form.append('language', lang);
+
+        // Inject Hinglish exemplar prompt for 'hindi' / 'auto' so Whisper-1
+        // preserves code-mixing instead of forcing single-script output.
+        // (The WS / Realtime API path above does NOT accept a `prompt` parameter
+        // in session.update for gpt-4o-transcribe, so this REST fallback is
+        // the only way to bias vocabulary on the OpenAI provider today.)
+        const injectPrompt = this.languageKey === 'hindi' || this.languageKey === 'auto';
+        if (injectPrompt) {
+            const userPrompt = SettingsManager.getInstance().get('whisperContextPrompt');
+            const prompt = buildWhisperPrompt(userPrompt);
+            if (prompt) form.append('prompt', prompt);
+        }
 
         const response = await axios.post(this.restEndpoint, form, {
             headers: {

@@ -176,7 +176,6 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import MeetingChatPanel from './MeetingChatPanel';
-import SuggestionOverlay from './SuggestionOverlay';
 import { useResolvedTheme } from '../hooks/useResolvedTheme';
 import { genMessageId } from '../utils/messageId';
 import { mapLanguageForPrism, isBlockCode } from '../utils/prismLanguage';
@@ -599,6 +598,16 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
   const [isMeetingPanelOpen, setIsMeetingPanelOpen] = useState(false);
   const [skillPickerIndex, setSkillPickerIndex] = useState(0);
   const { shortcuts, isShortcutPressed } = useShortcuts();
+
+  // Listen for the global Cmd+Shift+C shortcut to open the Meeting Copilot.
+  // Works even when the overlay window is in mouse-passthrough mode because
+  // globalShortcut bypasses the OS-level setIgnoreMouseEvents click-through.
+  useEffect(() => {
+    const off = window.electronAPI?.onMeetingCopilotOpen?.(() => {
+      setIsMeetingPanelOpen(true);
+    });
+    return () => { off?.(); };
+  }, []);
   const [messages, setMessages] = useState<Message[]>([]);
   // Keep chat history visible once an answer lands until explicit clear / session reset.
   const [answerPanelPinned, setAnswerPanelPinned] = useState(false);
@@ -3311,14 +3320,14 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
     );
 
     cleanups.push(
-      window.electronAPI.onIntelligenceFollowUpQuestionsUpdate((data) => {
+      window.electronAPI.onIntelligenceFollowUpQuestionsUpdate((data: any) => {
         setIsProcessing(false);
         finalizeStreamingByIntent('follow_up_questions', data.questions);
       }),
     );
 
     cleanups.push(
-      window.electronAPI.onIntelligenceClarify((data) => {
+      window.electronAPI.onIntelligenceClarify((data: any) => {
         setIsProcessing(false);
         finalizeStreamingByIntent('clarify', data.clarification);
       }),
@@ -3333,14 +3342,14 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
     );
 
     cleanups.push(
-      window.electronAPI.onIntelligenceManualResult((data) => {
+      window.electronAPI.onIntelligenceManualResult((data: any) => {
         setIsProcessing(false);
         finalizeStreamingByIntent('chat', `🎯 **Answer:**\n\n${data.answer}`);
       }),
     );
 
     cleanups.push(
-      window.electronAPI.onIntelligenceError((data) => {
+      window.electronAPI.onIntelligenceError((data: any) => {
         setIsProcessing(false);
         setMessages((prev) => [
           ...prev,
@@ -3760,7 +3769,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
     // a phone-mirror or stale desktop stream can't bleed into the active bubble. Tokens
     // without a streamId (back-compat) are always accepted.
     cleanups.push(
-      window.electronAPI.onGeminiStreamToken((token, meta) => {
+      window.electronAPI.onGeminiStreamToken((token: string, meta: any) => {
         const decision = resolveChatStreamToken(chatStreamIdRef.current, meta?.streamId);
         chatStreamIdRef.current = decision.activeId;
         if (!decision.accept) return;
@@ -3770,7 +3779,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
 
     // Stream Done
     cleanups.push(
-      window.electronAPI.onGeminiStreamDone((data) => {
+      window.electronAPI.onGeminiStreamDone((data: any) => {
         // Ignore a done from a superseded stream (audit finding #3) so it can't
         // tear down a newer stream's row. A done without a streamId is honored
         // (back-compat). On an honored done we clear the adopted id.
@@ -3872,7 +3881,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
 
     // Stream Error
     cleanups.push(
-      window.electronAPI.onGeminiStreamError((error) => {
+      window.electronAPI.onGeminiStreamError((error: any) => {
         flushToken();
         setIsProcessing(false);
         requestStartTimeRef.current = null; // Clear timer on error
@@ -3910,7 +3919,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
     // Phone-initiated chat: main process streams tokens via gemini-stream-*; this
     // event adds the user turn + streaming placeholder before tokens arrive.
     cleanups.push(
-      window.electronAPI.onPhoneMirrorIncomingChat(({ message }) => {
+      window.electronAPI.onPhoneMirrorIncomingChat(({ message }: { message: string }) => {
         flushToken();
         requestStartTimeRef.current = Date.now();
         const userId = genMessageId();
@@ -4049,7 +4058,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
 
         window.electronAPI
           .finalizeMicSTT()
-          .catch((err) => console.error('[NativelyInterface] Failed to send finalizeMicSTT:', err));
+          .catch((err: unknown) => console.error('[NativelyInterface] Failed to send finalizeMicSTT:', err));
 
         const currentAttachments = attachedContext;
         setAttachedContext([]);
@@ -5071,7 +5080,7 @@ Provide only the answer, nothing else.`;
   // we attach the screenshot to context and immediately trigger AI analysis.
   useEffect(() => {
     if (!window.electronAPI.onCaptureAndProcess) return;
-    const unsubscribe = window.electronAPI.onCaptureAndProcess((data) => {
+    const unsubscribe = window.electronAPI.onCaptureAndProcess((data: any) => {
       setIsExpanded(true);
 
       // Store screenshot in a stable ref BEFORE updating React state.
@@ -5230,7 +5239,7 @@ Provide only the answer, nothing else.`;
   // Listens for shortcuts triggered when the app is in the background
   useEffect(() => {
     if (!window.electronAPI.onGlobalShortcut) return;
-    const unsubscribe = window.electronAPI.onGlobalShortcut(({ action }) => {
+    const unsubscribe = window.electronAPI.onGlobalShortcut(({ action }: { action: string }) => {
       const handlers = handlersRef.current;
       const generalHandlers = generalHandlersRef.current;
 
@@ -5296,7 +5305,7 @@ Provide only the answer, nothing else.`;
     // listeners see the same binding.
     let escSuppressUntilNextActive = false;
 
-    const unsubState = window.electronAPI.onStealthTapState(({ active, reason }) => {
+    const unsubState = window.electronAPI.onStealthTapState(({ active, reason }: { active: boolean; reason: string }) => {
       stealthTapActiveRef.current = active;
       setStealthTapActive(active);
       if (active) {
@@ -5315,7 +5324,7 @@ Provide only the answer, nothing else.`;
       }
     });
 
-    const unsubKey = window.electronAPI.onStealthKeyCaptured((ev) => {
+    const unsubKey = window.electronAPI.onStealthKeyCaptured((ev: any) => {
       // CONTRACT WITH RUST: keyboard_tap.rs pass-through filter (R3)
       // returns the event unmodified for ANY system-modifier key
       // (Cmd / Ctrl / Option / Fn) and for ALL F-keys, so the OS
@@ -5405,7 +5414,7 @@ Provide only the answer, nothing else.`;
   // and render an inline banner pointing to Settings → Shortcuts.
   useEffect(() => {
     if (!window.electronAPI?.onKeybindRegistrationFailed) return;
-    const unsubscribe = window.electronAPI.onKeybindRegistrationFailed(({ id, accelerator }) => {
+    const unsubscribe = window.electronAPI.onKeybindRegistrationFailed(({ id, accelerator }: { id: string; accelerator: string }) => {
       if (id !== 'chat:focusInput') return;
       setStealthHotkeyConflict(accelerator);
     });
@@ -5450,7 +5459,7 @@ Provide only the answer, nothing else.`;
     // window.electronAPI.platform guard above already covers that.
     if (stealthTapShouldAutoEngage) {
       stealthTapShouldAutoEngage()
-        .then((ok) => {
+        .then((ok: boolean) => {
           stealthAutoEngageOkRef.current = !!ok;
         })
         .catch(() => {
@@ -5471,7 +5480,7 @@ Provide only the answer, nothing else.`;
         return;
       }
       if (!isCgEventTapAvailableRef.current) return;
-      window.electronAPI.stealthTapStart().catch((err) => {
+      window.electronAPI.stealthTapStart().catch((err: unknown) => {
         console.warn('[stealth] tap start IPC failed', err);
       });
     };
@@ -6605,17 +6614,6 @@ Provide only the answer, nothing else.`;
         onClose={() => setIsMeetingPanelOpen(false)}
         initialQuery={inputValue}
     />
-
-    {/* Live Suggestion Overlay — restores the upstream Natively live-transcript +
-        suggestion card UX. Self-shows when native audio connects / transcripts
-        arrive / suggestions emit. Anchored bottom-left so it doesn't fight the
-        Copilot floating button (top-right). */}
-    <div
-        className="fixed bottom-3 left-3 z-50 max-w-[360px] pointer-events-auto"
-        style={{ pointerEvents: 'auto' }}
-    >
-        <SuggestionOverlay />
-    </div>
 
     {/* Floating "Open Meeting Copilot" button — visible top-right when this chat
         surface is mounted. Click to open the redesigned panel. */}

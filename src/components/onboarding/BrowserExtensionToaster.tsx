@@ -89,7 +89,7 @@ export const BrowserExtensionToaster: React.FC<Props> = ({ isOpen, onDismiss, on
   useEffect(() => {
     // Auto-dismiss silently the moment the extension connects while visible.
     if (!isOpen || testForceShow) return;
-    const unsub = window.electronAPI?.onPhoneMirrorStatus?.(info => {
+    const unsub = window.electronAPI?.onPhoneMirrorStatus?.((info: any) => {
       if (info?.extensionConnected) {
         try { localStorage.setItem(DISMISS_KEY, '1'); } catch { /* ignore */ }
         onDismiss();

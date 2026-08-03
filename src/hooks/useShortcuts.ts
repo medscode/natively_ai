@@ -27,6 +27,7 @@ export interface ShortcutConfig {
     // General
     toggleVisibility: string[];
     toggleMousePassthrough: string[];
+    openMeetingCopilot: string[];
     processScreenshots: string[];
     captureAndProcess: string[];
     capturePage: string[];
@@ -60,6 +61,7 @@ function buildDefaultShortcuts(): ShortcutConfig {
         moveWindowRight: [mod, shift, '→'],
         toggleVisibility: [mod, 'B'],
         toggleMousePassthrough: [mod, shift, 'B'],
+        openMeetingCopilot: [mod, shift, 'C'],
         processScreenshots: [mod, 'Enter'],
         captureAndProcess: [mod, shift, 'Enter'],
         capturePage: [mod, shift, 'Y'],
@@ -121,6 +123,7 @@ export const useShortcuts = () => {
                 // General
                 else if (kb.id === 'general:toggle-visibility') newShortcuts.toggleVisibility = keys;
                 else if (kb.id === 'general:toggle-mouse-passthrough') newShortcuts.toggleMousePassthrough = keys;
+                else if (kb.id === 'chat:open-meeting-copilot') newShortcuts.openMeetingCopilot = keys;
                 else if (kb.id === 'general:process-screenshots') newShortcuts.processScreenshots = keys;
                 else if (kb.id === 'general:capture-and-process') newShortcuts.captureAndProcess = keys;
                 else if (kb.id === 'general:capture-dom') newShortcuts.capturePage = keys;
@@ -187,6 +190,7 @@ export const useShortcuts = () => {
             // General
             case 'toggleVisibility': backendId = 'general:toggle-visibility'; break;
             case 'toggleMousePassthrough': backendId = 'general:toggle-mouse-passthrough'; break;
+            case 'openMeetingCopilot': backendId = 'chat:open-meeting-copilot'; break;
             case 'processScreenshots': backendId = 'general:process-screenshots'; break;
             case 'captureAndProcess': backendId = 'general:capture-and-process'; break;
             case 'capturePage': backendId = 'general:capture-dom'; break;

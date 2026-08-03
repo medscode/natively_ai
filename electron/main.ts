@@ -1438,6 +1438,12 @@ export class AppState {
         } else if (actionId === 'general:toggle-mouse-passthrough') {
           // Adapted from public PR #113 — verify premium interaction
           this.toggleOverlayMousePassthrough();
+        } else if (actionId === 'chat:open-meeting-copilot') {
+          // Open the Meeting Copilot panel. Works even when the overlay window
+          // is in mouse-passthrough mode because globalShortcut bypasses the
+          // OS-level click-through that setIgnoreMouseEvents(true) installs.
+          const mainWindow = this.getMainWindow();
+          this.sendToWindow(mainWindow, 'meeting-copilot:open', {});
         } else if (actionId === 'general:take-screenshot') {
           // Route to renderer via global-shortcut so the renderer handles the
           // screenshot through the IPC invoke path (request/response guarantee).
@@ -2732,6 +2738,15 @@ export class AppState {
         console.warn(`[Main] No API key for ${sttProvider} STT, falling back to GoogleSTT`);
         stt = new GoogleSTT(speaker);
       }
+    } else if (sttProvider === 'sarvam') {
+      const apiKey = CredentialsManager.getInstance().getSarvamSttApiKey();
+      if (apiKey) {
+        console.log(`[Main] Using RestSTT (sarvam) for ${speaker}`);
+        stt = new RestSTT('sarvam', apiKey);
+      } else {
+        console.warn(`[Main] No API key for sarvam STT, falling back to GoogleSTT`);
+        stt = new GoogleSTT(speaker);
+      }
     } else if (sttProvider === 'local-whisper') {
       const { LocalWhisperSTT } = require('./audio/LocalWhisperSTT');
       const sm = SettingsManager.getInstance();
@@ -2756,10 +2771,14 @@ export class AppState {
       // similar tokens ("Medhavee" → "Med have y"). The prompt is set once
       // here and re-pushed if the user updates it via Settings (see
       // ipcHandlers settings:set:whisperContextPrompt).
-      const contextPrompt = (sm.get('whisperContextPrompt') ?? '').toString();
-      if (contextPrompt) {
-        lws.setContext(contextPrompt);
-      }
+      //
+      // When the user hasn't supplied a custom prompt, we fall back to the
+      // shared Hinglish exemplar set so Hinglish / Hindi-English code-mixing
+      // is preserved by default on the local-whisper path too (the cloud
+      // REST providers inject the same prompt via RestSTT / OpenAI REST).
+      const { buildWhisperPrompt } = require('./audio/whisper/contextPrompt');
+      const contextPrompt = buildWhisperPrompt(sm.get('whisperContextPrompt'));
+      lws.setContext(contextPrompt);
       stt = lws as any;
     } else {
       stt = new GoogleSTT(speaker);
@@ -5089,6 +5108,20 @@ export class AppState {
       this.intelligenceManager.setMeetingMetadata(metadata);
     }
 
+    // Sync audio-enhancement (highpass + AGC + compressor) to the capture
+    // instances. Runs BEFORE capture.start() so the first chunk is already
+    // cleaned. Settings key defaults to OFF so this is a no-op unless
+    // the user has opted in.
+    try {
+      const ae =
+        SettingsManager.getInstance().get('audioEnhancementConfig') ??
+        { enabled: false, strength: 60 };
+      this.microphoneCapture?.setAudioEnhancementConfig?.(ae);
+      this.systemAudioCapture?.setAudioEnhancementConfig?.(ae);
+    } catch (err) {
+      console.warn('[Main] failed to apply audio enhancement at meeting start:', (err as Error)?.message);
+    }
+
     // Phase 3 — bind dynamic action engine to this meeting + active mode.
     // Action store is per-(sessionId, modeId), so a fresh sessionId here gives
     // us per-meeting isolation. Re-binding on mode switch is handled in the
@@ -5792,9 +5825,12 @@ export class AppState {
     const { CredentialsManager } = require('./services/CredentialsManager');
     CredentialsManager.getInstance().setSttLanguage(key);
 
-    // 'auto' is only meaningful for NativelyProSTT — other providers fall back to en-US.
-    const sttProvider = CredentialsManager.getInstance().getSttProvider();
-    const effectiveKey = (key === 'auto' && sttProvider !== 'natively') ? 'english-us' : key;
+    // 'auto' is now passed through to all Whisper REST paths (Groq, OpenAI REST)
+    // so the decoder can auto-detect and preserve Hinglish code-mixing.
+    // Per-provider factories (RestSTT.ts, OpenAIStreamingSTT._restUpload) decide
+    // whether to attach the `language` param; non-Whisper providers fall back
+    // to their own built-in auto-detection via setRecognitionLanguage(key).
+    const effectiveKey = key;
 
     this.googleSTT?.setRecognitionLanguage(effectiveKey);
     this.googleSTT_User?.setRecognitionLanguage(effectiveKey);

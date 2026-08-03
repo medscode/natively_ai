@@ -408,7 +408,7 @@ export const AIProvidersSettings: React.FC = () => {
             return;
         }
         window.electronAPI?.getAvailableLiteLLMModels?.()
-            .then((models) => {
+            .then((models: any) => {
                 if (!cancelled) setLitellmModels(Array.isArray(models) ? models.filter(Boolean) : []);
             })
             .catch(() => {
@@ -763,7 +763,7 @@ export const AIProvidersSettings: React.FC = () => {
                 setHasStoredKey(prev => ({ ...prev, litellm: true }));
                 setLitellmApiKey('');
                 window.electronAPI?.getAvailableLiteLLMModels?.()
-                    .then((models) => setLitellmModels(Array.isArray(models) ? models.filter(Boolean) : []))
+                    .then((models: any) => setLitellmModels(Array.isArray(models) ? models.filter(Boolean) : []))
                     .catch(() => setLitellmModels([]));
                 setTimeout(() => setSavedStatus(prev => ({ ...prev, litellm: false })), 2000);
             }

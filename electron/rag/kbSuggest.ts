@@ -76,7 +76,8 @@ Write a SHORT (1-3 sentence) suggested follow-up the user could say next, ground
     const llmHelper = appState.processingHelper.getLLMHelper();
     const suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
 
-    // Send to all renderer windows so SuggestionOverlay + MeetingChatPanel pick it up
+    // Send to all renderer windows so MeetingChatPanel picks it up via its
+    // own onSuggestion listener (the legacy SuggestionOverlay has been removed).
     const { BrowserWindow } = await import('electron');
     BrowserWindow.getAllWindows().forEach((win: any) => {
         if (!win.isDestroyed()) {

@@ -514,7 +514,7 @@ export const NativelyApiSettings: React.FC<NativelyApiSettingsProps> = ({ initia
 
   useEffect(() => {
     window.electronAPI?.getNativelyPricing?.()
-      .then((res) => {
+      .then((res: any) => {
         if (res?.ok && res.products) setPricingProducts(res.products);
       })
       .catch(() => {});

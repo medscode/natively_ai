@@ -16,8 +16,22 @@ import axios from 'axios';
 import FormData from 'form-data';
 import { RECOGNITION_LANGUAGES } from '../config/languages';
 import { isValidSttRegion } from '../utils/curlUtils';
+import { buildWhisperPrompt } from './whisper/contextPrompt';
+import { SettingsManager } from '../services/SettingsManager';
 
-export type RestSttProvider = 'groq' | 'openai' | 'elevenlabs' | 'azure' | 'ibmwatson';
+// Decides whether to attach the language param. For 'hindi' / 'auto' we omit
+// it so Whisper-large-v3-turbo can preserve Hinglish code-mixing (otherwise
+// the decoder forces a single-script output). English variants still send
+// `language: 'en'` for monolingual callers.
+const wantsExplicitLang = (languageKey: string | undefined): boolean => {
+    if (!languageKey || languageKey === 'auto' || languageKey === 'hindi') return false;
+    return languageKey.startsWith('english-');
+};
+
+const shouldInjectHinglishPrompt = (languageKey: string | undefined): boolean =>
+    languageKey === 'hindi' || languageKey === 'auto';
+
+export type RestSttProvider = 'groq' | 'openai' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'sarvam';
 
 interface RestSttProviderConfig {
     endpoint: string;
@@ -33,7 +47,12 @@ type ProviderConfigFactory = (apiKey: string, region?: string, languageKey?: str
 
 const PROVIDER_CONFIGS: Record<RestSttProvider, ProviderConfigFactory> = {
     groq: (apiKey, region, languageKey) => {
-        const lang = (languageKey && languageKey !== 'auto') ? RECOGNITION_LANGUAGES[languageKey]?.iso639 : undefined;
+        const lang = wantsExplicitLang(languageKey)
+            ? RECOGNITION_LANGUAGES[languageKey!]?.iso639
+            : undefined;
+        const prompt = shouldInjectHinglishPrompt(languageKey)
+            ? buildWhisperPrompt(SettingsManager.getInstance().get('whisperContextPrompt'))
+            : undefined;
         return {
             endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
             model: 'whisper-large-v3-turbo',
@@ -42,7 +61,8 @@ const PROVIDER_CONFIGS: Record<RestSttProvider, ProviderConfigFactory> = {
             extraFormFields: {
                 temperature: '0',
                 response_format: 'json',
-                ...(lang ? { language: lang } : {})
+                ...(lang ? { language: lang } : {}),
+                ...(prompt ? { prompt } : {})
             },
             extractTranscript: (data: any) => {
                 if (typeof data === 'string') return data;
@@ -51,14 +71,20 @@ const PROVIDER_CONFIGS: Record<RestSttProvider, ProviderConfigFactory> = {
         };
     },
     openai: (apiKey, region, languageKey) => {
-        const lang = (languageKey && languageKey !== 'auto') ? RECOGNITION_LANGUAGES[languageKey]?.iso639 : undefined;
+        const lang = wantsExplicitLang(languageKey)
+            ? RECOGNITION_LANGUAGES[languageKey!]?.iso639
+            : undefined;
+        const prompt = shouldInjectHinglishPrompt(languageKey)
+            ? buildWhisperPrompt(SettingsManager.getInstance().get('whisperContextPrompt'))
+            : undefined;
         return {
             endpoint: 'https://api.openai.com/v1/audio/transcriptions',
             model: 'whisper-1',
             authHeader: { Authorization: `Bearer ${apiKey}` },
             uploadType: 'multipart',
             extraFormFields: {
-                ...(lang ? { language: lang } : {})
+                ...(lang ? { language: lang } : {}),
+                ...(prompt ? { prompt } : {})
             },
             extractTranscript: (data: any) => {
                 if (typeof data === 'string') return data;
@@ -112,20 +138,80 @@ const PROVIDER_CONFIGS: Record<RestSttProvider, ProviderConfigFactory> = {
             },
         };
     },
+    sarvam: (apiKey, region, languageKey) => {
+        // Sarvam AI: Indic-first STT with native Hinglish support. The
+        // `mode` parameter forces output script: 'translit' produces
+        // Latin/Roman output regardless of input script — exactly the
+        // WhatsApp-style Hinglish the user wants. 'language_code: unknown'
+        // lets Sarvam auto-detect.
+        const sm = SettingsManager.getInstance();
+        const model = (sm.get('sarvamSttModel') as string) || 'saaras:v3';
+        const mode = (sm.get('sarvamSttMode') as string) || 'translit';
+        const explicitLang = (sm.get('sarvamSttLanguage') as string) || '';
+
+        let languageCode: string | undefined;
+        if (explicitLang) {
+            languageCode = explicitLang;
+        } else if (!languageKey || languageKey === 'auto' || languageKey === 'hindi') {
+            languageCode = languageKey === 'hindi' ? 'hi-IN' : 'unknown';
+        } else {
+            languageCode = RECOGNITION_LANGUAGES[languageKey]?.bcp47 ?? 'unknown';
+        }
+
+        return {
+            endpoint: 'https://api.sarvam.ai/speech-to-text',
+            // model is appended via extraFormFields (Sarvam takes `model` as
+            // a form field, not a config-only value). Empty string here so
+            // uploadMultipart's hardcoded `form.append('model', this.config.model)`
+            // becomes a no-op for this provider (handled by the provider guard below).
+            model: '',
+            authHeader: { 'api-subscription-key': apiKey },
+            uploadType: 'multipart',
+            extraFormFields: {
+                model,
+                mode,
+                ...(languageCode ? { language_code: languageCode } : {})
+            },
+            extractTranscript: (data: any) => {
+                return data?.transcript ?? '';
+            },
+        };
+    },
 };
 
 // Minimum buffer size before sending (avoid sending tiny fragments)
-// 16kHz * 2 bytes/sample * 1 channel * 0.125 seconds = 4000 bytes
-// Lowered from 16000 to allow short command utterances ("Yes", "Stop") to flush instantly.
-const MIN_BUFFER_BYTES = 4000;
+// 16kHz * 2 bytes/sample * 1 channel * ~0.375s = 12000 bytes. Tuned via
+// electron/audio/__tests__/scratch/sttPipelineHarness.mjs to flush short
+// utterances like "Yes" / "OK" (typically 8-12 KB of audio) without
+// dropping them, while still rejecting transient noise bursts < 200ms.
+// The silence-tail debounce below merges intra-sentence pauses so the
+// minimum effective upload grows beyond this floor for longer phrases.
+const MIN_BUFFER_BYTES = 12000;
 
 // Safety-net upload interval (ms). Primary flush is triggered by speech_ended events.
 // This fires as a backstop if someone talks continuously for >10s without any pause,
-// preventing unbounded buffer growth and Whisper API timeouts.
+// preventing unbounded buffer growth and STT API file-size/timeout errors.
 const SAFETY_NET_INTERVAL_MS = 10000;
 
-// Silence threshold - if RMS is below this, skip the upload
-const SILENCE_RMS_THRESHOLD = 50;
+// Silence-tail debounce: when the native VAD reports speech_ended, wait this
+// long for new audio to arrive before flushing. If a new chunk arrives within
+// the window, cancel the timer — the user is still mid-sentence. 400ms halves
+// the previous latency while still absorbing clause-boundary pauses in
+// English/Hinglish. Tuned via sttPipelineHarness.mjs.
+const FLUSH_DEBOUNCE_MS = 400;
+
+// Silence threshold - if RMS is below this, skip the upload. On the int16
+// scale (0..32767), 15 ≈ -67 dBFS — quieter than ambient room tone. The Rust
+// SilenceSuppressor (mic=100 RMS, sys=30 RMS + adaptive EMA) is the first
+// filter; this is the second. Anything below 15 is effectively zero amplitude.
+const SILENCE_RMS_THRESHOLD = 15;
+
+// Max concurrent uploads in flight. Allows a short utterance to flush while
+// a long upload is still in progress — without this, head-of-line blocking on
+// the network causes the next flush to wait for the previous upload's full
+// network round-trip latency (often 500-1000ms). Cap of 2 keeps Sarvam
+// rate limits (~5 req/s free tier) comfortable.
+const MAX_CONCURRENT_UPLOADS = 2;
 
 export class RestSTT extends EventEmitter {
     private provider: RestSttProvider;
@@ -137,8 +223,10 @@ export class RestSTT extends EventEmitter {
     private totalBufferedBytes = 0;
     private safetyNetTimer: NodeJS.Timeout | null = null;
     private isActive = false;
-    private isUploading = false;
-    private flushPending = false;  // Bug #2 fix: queue flush when upload in progress
+    private isUploading = false;          // kept for legacy callers; replaced by activeUploads
+    private activeUploads = 0;            // parallel-upload counter; replaces single-bit isUploading
+    private flushPending = false;         // coalescing flag: drain when any slot frees up
+    private flushDebounceTimer: NodeJS.Timeout | null = null;  // Silence-tail debounce: wait for new audio after speech_ended
 
     // Audio config (must match SystemAudioCapture output)
     private sampleRate = 16000;
@@ -235,6 +323,10 @@ export class RestSTT extends EventEmitter {
             clearInterval(this.safetyNetTimer);
             this.safetyNetTimer = null;
         }
+        if (this.flushDebounceTimer) {
+            clearTimeout(this.flushDebounceTimer);
+            this.flushDebounceTimer = null;
+        }
 
         // Flush remaining audio
         this.flushAndUpload();
@@ -245,25 +337,54 @@ export class RestSTT extends EventEmitter {
      */
     public write(audioData: Buffer): void {
         if (!this.isActive) return;
+        // Cancel any pending flush debounce — new audio means the user is still
+        // speaking (intra-sentence pause was absorbed). Without this, the 800ms
+        // debounce would fire and break one sentence into two uploads.
+        if (this.flushDebounceTimer) {
+            clearTimeout(this.flushDebounceTimer);
+            this.flushDebounceTimer = null;
+        }
         this.chunks.push(audioData);
         this.totalBufferedBytes += audioData.length;
     }
 
     /**
      * Called when the native SilenceSuppressor detects speech has ended.
-     * The internal Rust engine already applies a 150-200ms VAD hangover to avoid
-     * word-breaks, so we flush immediately without adding redundant TS debouncing.
+     *
+     * Debounce: wait FLUSH_DEBOUNCE_MS before flushing, so intra-sentence pauses
+     * (typical clause boundaries in English/Hinglish) merge into a single upload.
+     * If `write()` fires during the debounce window (the user kept talking), the
+     * timer is cancelled and the buffer keeps accumulating. If the meeting ends
+     * (`stop()`/`finalize()`) before the timer fires, the timer is flushed
+     * immediately so trailing audio isn't lost.
+     *
+     * Why this exists: the native Rust VAD reports speech_ended on every pause
+     * ≥ ~200ms, but Sarvam/Whisper needs ~1s of contiguous audio to return a
+     * clean transcript. Flushing every 200ms produced 11-char partial chunks.
      */
     public notifySpeechEnded(): void {
         if (!this.isActive) return;
 
-        console.log(`[RestSTT] Speech ended detected by native VAD — flushing buffer immediately`);
-        this.flushAndUpload();
+        // If a debounce is already pending, leave it. Multiple rapid
+        // speech_ended events (e.g. "uh" between words) shouldn't keep
+        // resetting the timer — we want one flush at the end of the silence.
+        if (this.flushDebounceTimer) return;
+
+        console.log(`[RestSTT] Speech ended detected by native VAD — debouncing flush (${FLUSH_DEBOUNCE_MS}ms)`);
+        this.flushDebounceTimer = setTimeout(() => {
+            this.flushDebounceTimer = null;
+            this.flushAndUpload();
+        }, FLUSH_DEBOUNCE_MS);
     }
 
     public finalize(): void {
         if (!this.isActive) return;
-        console.log(`[RestSTT] Finalize — flushing buffer immediately`);
+        // Cancel any pending debounce — finalize is a hard flush, no point waiting.
+        if (this.flushDebounceTimer) {
+            clearTimeout(this.flushDebounceTimer);
+            this.flushDebounceTimer = null;
+        }
+        console.log(`[RestSTT] Finalize — flushing immediately`);
         this.flushAndUpload();
     }
 
@@ -272,7 +393,7 @@ export class RestSTT extends EventEmitter {
      */
     private async flushAndUpload(): Promise<void> {
         // Gate every flush on isActive. Without this, the
-        // finally-re-entrancy at line ~334 (`if (this.flushPending) this.flushAndUpload()`)
+        // finally-re-entrancy below (`if (this.flushPending) this.flushAndUpload()`)
         // can fire AFTER stop() has set isActive=false, and the body below
         // would happily upload trailing audio to the REST provider for the
         // rest of the process lifetime. The re-arm block below would also
@@ -283,8 +404,11 @@ export class RestSTT extends EventEmitter {
         // Skip if no data
         if (this.chunks.length === 0 || this.totalBufferedBytes < MIN_BUFFER_BYTES) return;
 
-        // Bug #2 fix: if currently uploading, queue a flush for when it completes
-        if (this.isUploading) {
+        // Parallel upload gate: allow up to MAX_CONCURRENT_UPLOADS in flight.
+        // Beyond that, coalesce into flushPending so we don't burst past the
+        // provider's rate limit. When any in-flight upload finishes, the
+        // finally block below drains whatever accumulated during the slot.
+        if (this.activeUploads >= MAX_CONCURRENT_UPLOADS) {
             this.flushPending = true;
             return;
         }
@@ -329,7 +453,8 @@ export class RestSTT extends EventEmitter {
         // Add WAV header — stamp with actual rate/channel after resampling (always 16kHz mono)
         const wavBuffer = this.addWavHeader(pcm16k, TARGET_RATE);
 
-        this.isUploading = true;
+        this.activeUploads++;
+        this.isUploading = this.activeUploads > 0;  // legacy flag for any external readers
 
         try {
             const transcript = await this.uploadAudio(wavBuffer);
@@ -346,10 +471,13 @@ export class RestSTT extends EventEmitter {
             console.error(`[RestSTT] Upload error:`, err);
             this.emit('error', err instanceof Error ? err : new Error(String(err)));
         } finally {
-            this.isUploading = false;
+            this.activeUploads--;
+            this.isUploading = this.activeUploads > 0;
 
-            // Bug #2 fix: if a flush was requested while we were uploading, process it now
-            if (this.flushPending) {
+            // Drain any flush that was queued while slots were full. Same slot
+            // is now free; the recursive call hits the activeUploads check
+            // and proceeds immediately.
+            if (this.flushPending && this.activeUploads < MAX_CONCURRENT_UPLOADS) {
                 this.flushPending = false;
                 this.flushAndUpload();
             }
@@ -377,10 +505,13 @@ export class RestSTT extends EventEmitter {
             contentType: 'audio/wav',
         });
 
-        // ElevenLabs uses 'model_id' instead of 'model'
+        // ElevenLabs uses 'model_id' instead of 'model'. Sarvam sends `model` as a
+        // form field via extraFormFields below (because the value comes from a
+        // settings key, not the static config.model), so we skip the append
+        // entirely here.
         if (this.provider === 'elevenlabs') {
             form.append('model_id', this.config.model);
-        } else {
+        } else if (this.provider !== 'sarvam') {
             form.append('model', this.config.model);
         }
 

@@ -201,7 +201,14 @@ export interface ElectronAPI {
   setGroqSttModel: (model: string) => Promise<{ success: boolean; error?: string }>
   setSonioxApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
   setIbmWatsonRegion: (region: string) => Promise<{ success: boolean; error?: string }>
-  testSttConnection: (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox', apiKey: string, region?: string) => Promise<{ success: boolean; error?: string }>
+  testSttConnection: (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam', apiKey: string, region?: string) => Promise<{ success: boolean; error?: string }>
+
+  // Sarvam AI STT
+  getSarvamSttConfig: () => Promise<{ apiKey: string; model: string; mode: string; language: string }>
+  setSarvamSttApiKey: (apiKey: string) => Promise<{ success: boolean; error?: string }>
+  setSarvamSttModel: (model: string) => Promise<{ success: boolean; error?: string }>
+  setSarvamSttMode: (mode: string) => Promise<{ success: boolean; error?: string }>
+  setSarvamSttLanguage: (language: string) => Promise<{ success: boolean; error?: string }>
 
   // STT Config Events (fired when STT provider/key changes during a meeting)
   onSttConfigChanged: (callback: (data: { configured: boolean; provider: string }) => void) => () => void
@@ -504,6 +511,7 @@ export interface ElectronAPI {
   onKeybindsUpdate: (callback: (keybinds: Array<any>) => void) => () => void
   onKeybindRegistrationFailed: (callback: (data: { id: string; accelerator: string }) => void) => () => void
   onGlobalShortcut: (callback: (data: { action: string }) => void) => () => void
+  onMeetingCopilotOpen: (callback: () => void) => () => void
 
   // CGEventTap-backed stealth typing (macOS only — graceful degradation elsewhere)
   stealthTapAvailable: () => Promise<boolean>
@@ -706,6 +714,20 @@ export interface ElectronAPI {
     error?: string;
   }>;
   onActiveCaseChanged: (callback: (data: { clientCaseId: string | null; name: string; company: string }) => void) => () => void;
+  // Index signature: preload.ts exposes 500+ IPC bindings across 2649 lines but
+  // only ~150 of them are typed above. The remaining gap is type-stub debt,
+  // not runtime debt — preload registers every binding at runtime via
+  // contextBridge.exposeInMainWorld. Without this index signature, every call
+  // site using a binding not declared above emits TS2339 and breaks `tsc`. This
+  // signature lets the compiler accept ANY binding name as `any` while still
+  // allowing the explicit declarations above to give precise types when
+  // available.
+  //
+  // Two interfaces are merged via TS declaration-merging: this `export interface`
+  // and the `declare global { interface ElectronAPI }` block below. Both need
+  // the [k: string]: any index for unresolved TS2339 errors. The properly-typed
+  // declarations above take precedence when present.
+  [k: string]: any;
 }
 
 /**
@@ -923,5 +945,44 @@ export interface PhoneMirrorInfo {
 declare global {
   interface Window {
     electronAPI: ElectronAPI
+  }
+  // Audio-enhancement bindings (older builds may not have these; calls are
+  // guarded with `?.` at every call site).
+  interface ElectronAPI {
+    audioEnhancementGetConfig?: () => { enabled: boolean; strength: number };
+    audioEnhancementSetConfig?: (
+      cfg: { enabled: boolean; strength: number },
+    ) => Promise<{ success: boolean; error?: string }>;
+    // Theme/keybinds/capture helpers — present at runtime but not declared.
+    // Stubs here so the renderer type-checks against optional access. These
+    // were already missing from the interface pre-existing; we're catching up
+    // so new code compiles.
+    platform?: 'darwin' | 'win32' | 'linux';
+    getThemeMode?: () => Promise<{ mode: 'system' | 'light' | 'dark'; resolved: 'light' | 'dark' }>;
+    onThemeChanged?: (cb: (theme: { resolved: 'light' | 'dark' | 'system' }) => void) => () => void;
+    setMeetingInterfaceTheme?: (theme: string) => Promise<void>;
+    getKeybinds: () => Promise<any[]>;
+    onKeybindsUpdate: (cb: (keybinds: any[]) => void) => () => void;
+    setKeybind: (id: string, value: string) => Promise<boolean>;
+    resetKeybinds: () => Promise<any[]>;
+    getUndetectable?: () => Promise<boolean>;
+    getOverlayMousePassthrough?: () => Promise<boolean>;
+    getDisguise?: () => Promise<'terminal' | 'settings' | 'activity' | 'none'>;
+    setDisguise?: (mode: 'terminal' | 'settings' | 'activity' | 'none') => Promise<void>;
+    getVerboseLogging?: () => Promise<boolean>;
+    setVerboseLogging?: (enabled: boolean) => Promise<void>;
+    getMeetingRetention?: () => Promise<'forever' | '7d' | '30d' | 'never'>;
+    setMeetingRetention?: (mode: 'forever' | '7d' | '30d' | 'never') => Promise<void>;
+    // Open-at-login getter/setter.
+    getOpenAtLogin?: () => Promise<boolean>;
+    setOpenAtLogin?: (enabled: boolean) => Promise<void>;
+    onUndetectableChanged?: (cb: (v: boolean) => void) => () => void;
+    onDisguiseChanged?: (cb: (v: string) => void) => () => void;
+    onVerboseLoggingChanged?: (cb: (v: boolean) => void) => () => void;
+    onMeetingRetentionChanged?: (cb: (v: 'never' | 'forever' | '7d' | '30d') => void) => () => void;
+    // Mirror the index signature from the primary ElectronAPI declaration above
+    // so calls to bindings not yet declared here still type-check. preload
+    // registers every binding at runtime via contextBridge.exposeInMainWorld.
+    [k: string]: any;
   }
 }

@@ -32,8 +32,13 @@ const ensureSharedThemeSubscription = (): void => {
     }
 
     if (!unsubscribeThemeChanged) {
-        unsubscribeThemeChanged = window.electronAPI?.onThemeChanged?.(({ resolved }) => {
-            applyResolvedTheme(resolved);
+        // electronAPI's getThemeMode returns { mode, resolved } where
+        // resolved may include 'system' (auto). Our local `ResolvedTheme`
+        // union is `'light' | 'dark'` only — we resolve 'system' to
+        // 'light' or 'dark' by reading the actual DOM attribute set
+        // by the main process.
+        unsubscribeThemeChanged = window.electronAPI?.onThemeChanged?.(() => {
+            applyResolvedTheme(getResolvedTheme());
         }) ?? null;
     }
 };

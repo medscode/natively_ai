@@ -22,8 +22,8 @@ export const SupportToaster: React.FC<SupportToasterProps> = ({ isOpen, onDismis
     useEffect(() => {
         if (!window.electronAPI?.getDonationStatus) return;
         window.electronAPI.getDonationStatus()
-            .then(status => setHasDonated(status.hasDonated))
-            .catch(e => console.error('Failed to check donation status:', e));
+            .then((status: { hasDonated: boolean }) => setHasDonated(status.hasDonated))
+            .catch((e: unknown) => console.error('Failed to check donation status:', e));
     }, []);
 
 

@@ -186,6 +186,11 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
     // (last 120s of conversation). Default ON; footer toggle hides it.
     const [liveTranscriptEnabled, setLiveTranscriptEnabled] = useState(true);
     const [liveSegments, setLiveSegments] = useState<Array<{ role: 'interviewer' | 'user' | 'assistant'; text: string; timestamp: number }>>([]);
+    // Mirror of liveSegments used by intervals/effects that need the latest
+    // length without depending on the array reference. Reading from a ref
+    // avoids re-mounting the polling effect on every transcript update.
+    const liveSegmentsRef = useRef<typeof liveSegments>(liveSegments);
+    useEffect(() => { liveSegmentsRef.current = liveSegments; }, [liveSegments]);
     const [liveDot, setLiveDot] = useState(false);
     const streamBuffer = useStreamBuffer();
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -241,7 +246,14 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
     // Lightweight polling for the live transcript strip — fires the same IPC
     // SuggestModeCoordinator uses, but only while the panel is open AND
     // live-transcript toggle is on. 4s cadence is enough for human speech;
-    // SuggestionOverlay below handles the rich per-segment updates.
+    // (removed) SuggestionOverlay used to handle the rich per-segment updates.
+    //
+    // NOTE: We deliberately do NOT include `liveSegments.length` in the dep
+    // array. The previous version did, which created a re-render loop: every
+    // poll called setLiveSegments(r.segments), the array reference changed,
+    // the effect tore down and re-mounted its intervals, and React raised
+    // "Maximum update depth exceeded". The pulse-dot read uses a ref so the
+    // interval sees the latest value without re-running the effect.
     useEffect(() => {
         if (!isOpen || !liveTranscriptEnabled) return;
         let active = true;
@@ -262,7 +274,10 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             dotTimer = window.setTimeout(() => setLiveDot(false), 2000);
         };
         const id2 = window.setInterval(() => {
-            if (liveSegments.length > 0) pulse();
+            // Read length from a ref so we don't need it in the dep array
+            // (which would re-mount this interval every segment update and
+            // trigger React's maximum-update-depth warning).
+            if (liveSegmentsRef.current.length > 0) pulse();
         }, 4000);
         return () => {
             active = false;
@@ -270,7 +285,10 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             window.clearInterval(id2);
             if (dotTimer) window.clearTimeout(dotTimer);
         };
-    }, [isOpen, liveTranscriptEnabled, liveSegments.length]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally
+        // excluding liveSegmentsRef (stable ref, never changes) and
+        // liveSegments (would cause re-mount loop on every transcript update).
+    }, [isOpen, liveTranscriptEnabled]);
 
     // Persist mode + web search toggles
     useEffect(() => {
@@ -597,9 +615,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                 )}
 
                                 {/* Live transcript strip — last few segments from the
-                                    rolling transcript. Hidden when the toggle is off.
-                                    Mirrors the rich SuggestionOverlay below in a
-                                    compact form. */}
+                                    rolling transcript. Hidden when the toggle is off. */}
                                 {liveTranscriptEnabled && liveSegments.length > 0 && (
                                     <motion.div
                                         initial={{ opacity: 0, y: 4 }}

@@ -560,7 +560,7 @@ export const NativelyProSettings: React.FC<NativelyProSettingsProps> = ({ initia
         window.electronAPI?.licenseGetHardwareId?.().then(setHardwareId).catch(() => setHardwareId('unavailable'));
         refreshLicense();
         window.electronAPI?.getNativelyPricing?.()
-            .then((res) => {
+            .then((res: any) => {
                 if (res?.ok && res.products) setPricingProducts(res.products);
             })
             .catch(() => {});

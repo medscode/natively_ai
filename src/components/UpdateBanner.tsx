@@ -35,8 +35,8 @@ const UpdateBanner: React.FC = () => {
     useEffect(() => {
         let cancelled = false;
         window.electronAPI.getCanAutoUpdate?.()
-            .then(({ canAutoUpdate }) => { if (!cancelled) setCanAutoUpdate(canAutoUpdate); })
-            .catch((err) => {
+            .then(({ canAutoUpdate }: { canAutoUpdate: boolean }) => { if (!cancelled) setCanAutoUpdate(canAutoUpdate); })
+            .catch((err: unknown) => {
                 if (cancelled) return;
                 // Silent failure falls through to default false (manual fallback) — log for observability.
                 console.warn('[UpdateBanner] getCanAutoUpdate failed, using manual fallback:', err);
@@ -61,7 +61,7 @@ const UpdateBanner: React.FC = () => {
         });
 
         // Listen for download progress
-        const unsubProgress = window.electronAPI.onDownloadProgress((progressObj) => {
+        const unsubProgress = window.electronAPI.onDownloadProgress((progressObj: { percent: number }) => {
             // Re-show toast only if user hasn't explicitly dismissed it
             if (!userDismissedRef.current) {
                 setIsVisible(true);
@@ -71,7 +71,7 @@ const UpdateBanner: React.FC = () => {
         });
 
         // Listen for update-downloaded event
-        const unsubDownloaded = window.electronAPI.onUpdateDownloaded((info) => {
+        const unsubDownloaded = window.electronAPI.onUpdateDownloaded((info: UpdateInfo) => {
             console.log('[UpdateBanner] Update downloaded:', info);
             setUpdateInfo(info); // Update info again just in case
             if (info.parsedNotes) setParsedNotes(info.parsedNotes);

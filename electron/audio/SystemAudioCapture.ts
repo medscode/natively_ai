@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { loadNativeModule } from './nativeModuleLoader';
+import { AudioProcessor, AudioProcessorConfig } from './AudioProcessor';
 
 // RustAudioCapture is the native Rust class (napi-rs) that captures system audio.
 // May be null if the .node binary isn't available — constructor logs an error in that case.
@@ -13,6 +14,11 @@ export class SystemAudioCapture extends EventEmitter {
     private monitor: any = null;
     private chunkCount: number = 0;
     private sampleRatePollTimers: NodeJS.Timeout[] = [];
+    // JS-side audio enhancement. The same AudioProcessor used for mic
+    // capture. System audio is typically cleaner than mic, so this is
+    // most useful for taming a loud YouTube/screencast feed or for
+    // boosting a quiet remote presenter on a system-audio stream.
+    private audioProcessor: AudioProcessor | null = null;
     // See MicrophoneCapture for the full rationale — same idempotent
     // teardown-tracking pattern. Awaiting stop() guarantees the CoreAudio
     // Tap / SCK / WASAPI handle has been released before the caller
@@ -76,6 +82,21 @@ export class SystemAudioCapture extends EventEmitter {
     }
 
     /**
+     * Enable / disable JS-side audio enhancement on the system-audio stream.
+     * See MicrophoneCapture.setAudioEnhancementConfig for full design notes.
+     * Mirrored on the system-audio path so both channels share the same
+     * settings.
+     */
+    public setAudioEnhancementConfig(cfg: AudioProcessorConfig): void {
+        if (!this.audioProcessor) {
+            const rate = this.getSampleRate() || 48000;
+            this.audioProcessor = new AudioProcessor(rate);
+        }
+        this.audioProcessor.setConfig(cfg);
+        console.log(`[SystemAudioCapture] AudioEnhancement ${cfg.enabled ? 'ON' : 'OFF'} (strength=${cfg.strength})`);
+    }
+
+    /**
      * Start capturing audio
      */
     public start(): void {
@@ -123,6 +144,11 @@ export class SystemAudioCapture extends EventEmitter {
                     this.chunkCount++;
                     if (this.chunkCount <= 3 || this.chunkCount % 500 === 0) {
                         console.log(`[SystemAudioCapture] Chunk #${this.chunkCount}: ${chunk.length} bytes from Rust`);
+                    }
+                    // Audio enhancement (highpass + AGC + compressor). When the
+                    // processor is disabled, processChunk is a true pass-through.
+                    if (this.audioProcessor && this.audioProcessor.isEnabled()) {
+                        this.audioProcessor.processChunk(chunk);
                     }
                     // PERF: napi-rs already returns an owned Node Buffer from Rust's
                     // Buffer::from(bytes). The previous `Buffer.from(chunk)` was a

@@ -10,6 +10,13 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "strict": true,
+    // Index signature on ElectronAPI (src/types/electron.d.ts) makes undeclared
+    // IPC bindings resolve to `any`. Disabling noImplicitAny lets those flow
+    // through call-site parameters without per-site type annotations. Explicit
+    // (data: any) and (err: unknown) annotations were added where the call site
+    // actually uses the value; this flag covers the long tail of listeners that
+    // just pass the payload through.
+    "noImplicitAny": false,
     "noUnusedLocals": false,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,

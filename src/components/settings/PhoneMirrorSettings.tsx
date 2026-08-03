@@ -106,7 +106,7 @@ export const PhoneMirrorSettings: React.FC = () => {
 
   useEffect(() => {
     refresh();
-    const off = window.electronAPI.onPhoneMirrorStatus((next) => {
+    const off = window.electronAPI.onPhoneMirrorStatus((next: any) => {
       if (!next || typeof next !== 'object') return;
       setInfo((prev) => {
         const n = next as PhoneMirrorInfo;

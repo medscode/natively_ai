@@ -1,8 +1,8 @@
 /**
  * Energy-based Voice Activity Detection (VAD) at 16 kHz.
  *
- * Uses 30ms windows (480 samples), RMS threshold 0.008,
- * 700ms hangover (~23 frames), 250ms min speech duration (~8 frames),
+ * Uses 30ms windows (480 samples), RMS threshold 0.003 (~-50.5 dBFS),
+ * 210ms hangover (~7 frames), 120ms min speech duration (~4 frames),
  * and 15000ms max segment duration (force-flush).
  */
 
@@ -12,8 +12,14 @@ export interface SpeechSegment {
 }
 
 const WINDOW_SIZE = 480;       // 30ms at 16kHz
-const RMS_THRESHOLD = 0.008;
-const HANGOVER_FRAMES = 10;    // ~300ms — must be shorter than Rust SilenceSuppressor hangover (500ms)
+// Lowered from 0.008 (~-41.9 dBFS) to 0.003 (~-50.5 dBFS) so quieter
+// utterances aren't dropped at the JS VAD layer. The Rust SilenceSuppressor
+// (mic=100 RMS int16, sys=30 RMS int16 + adaptive EMA) is the first filter;
+// this is the second. Tuned via electron/audio/__tests__/scratch/sttPipelineHarness.mjs.
+const RMS_THRESHOLD = 0.003;
+// Reduced from 10 (~300ms) to 7 (~210ms) so segments close faster, matching
+// the RestSTT.FLUSH_DEBOUNCE_MS reduction. Keeps the two pipelines aligned.
+const HANGOVER_FRAMES = 7;
 const MIN_SPEECH_FRAMES = 4;   // ~120ms minimum to avoid transcribing tiny noise bursts
 const MAX_SPEECH_MS = 15000;
 

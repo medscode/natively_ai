@@ -2,6 +2,17 @@ import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * JS-side audio enhancement pipeline state.
+ * - enabled: master switch. When false, AudioProcessor.processChunk is a
+ *   zero-work pass-through (no allocations, no biquad state mutation).
+ * - strength: 0..100, mapped to AGC ceiling (1.0..4.0).
+ */
+export interface AudioEnhancementConfig {
+    enabled: boolean;
+    strength: number;
+}
+
 export interface AppSettings {
     // Only boot-critical or non-encrypted settings should live here.
     // In the future, other non-secret data like 'language' or 'theme'
@@ -91,6 +102,16 @@ export interface AppSettings {
     // decoder via `prompt_ids`. Comma-separated. Empty = no biasing.
     // Truncated to 8000 chars by LocalWhisperSTT.setContext.
     whisperContextPrompt?: string;
+    // Sarvam AI STT provider settings. Read by electron/audio/RestSTT.ts Sarvam
+    // factory. Defaults are applied at read time so unset values fall back to
+    // saaras:v3 / translit / auto-detect.
+    sarvamSttModel?: string;
+    sarvamSttMode?: 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix';
+    sarvamSttLanguage?: string;
+    // Audio enhancement (JS-side highpass + AGC + compressor). Off by default
+    // because the boost can change perceived voice tone; users opt in once
+    // they observe background noise. strength 0-100 (default 60).
+    audioEnhancementConfig?: AudioEnhancementConfig;
     // Phase 6 — TelemetryService toggle. Defaults to true (local-only JSONL).
     // When false, no telemetry is written to disk and no sinks fire.
     telemetryEnabled?: boolean;

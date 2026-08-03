@@ -818,7 +818,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
             setMeetingInterfaceThemeState(getMeetingInterfaceTheme());
         };
         window.addEventListener('storage', handleStorage);
-        const unsubscribeIpc = window.electronAPI?.onMeetingInterfaceThemeChanged?.((theme) => {
+        const unsubscribeIpc = window.electronAPI?.onMeetingInterfaceThemeChanged?.((theme: string) => {
             const valid: MeetingInterfaceTheme[] = ['default', 'liquid-glass', 'modern'];
             if (valid.includes(theme as MeetingInterfaceTheme)) {
                 setMeetingInterfaceThemeState(theme as MeetingInterfaceTheme);
@@ -856,7 +856,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
     } | null>(null);
 
     // STT Provider settings
-    const [sttProvider, setSttProvider] = useState<'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper'>('none');
+    const [sttProvider, setSttProvider] = useState<'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' | 'sarvam'>('none');
     const [groqSttModel, setGroqSttModel] = useState('whisper-large-v3-turbo');
     const [sttGroqKey, setSttGroqKey] = useState('');
     const [sttOpenaiKey, setSttOpenaiKey] = useState('');
@@ -880,6 +880,12 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
     const [hasStoredIbmWatsonKey, setHasStoredIbmWatsonKey] = useState(false);
     const [sttSonioxKey, setSttSonioxKey] = useState('');
     const [hasStoredSonioxKey, setHasStoredSonioxKey] = useState(false);
+    // Sarvam AI STT
+    const [sttSarvamKey, setSttSarvamKey] = useState('');
+    const [hasStoredSarvamKey, setHasStoredSarvamKey] = useState(false);
+    const [sarvamSttModel, setSarvamSttModel] = useState('saaras:v3');
+    const [sarvamSttMode, setSarvamSttMode] = useState<'translit' | 'transcribe' | 'codemix' | 'translate' | 'verbatim'>('translit');
+    const [sarvamSttLanguage, setSarvamSttLanguage] = useState('');
     const [isSttDropdownOpen, setIsSttDropdownOpen] = useState(false);
     const sttDropdownRef = React.useRef<HTMLDivElement>(null);
 
@@ -914,6 +920,20 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                     if (creds.azureRegion) setSttAzureRegion(creds.azureRegion);
                     setHasStoredIbmWatsonKey(creds.hasIbmWatsonKey);
                     setHasStoredSonioxKey(creds.hasSonioxKey || false);
+                    setHasStoredSarvamKey(creds.hasSarvamKey || false);
+
+                    // Load Sarvam model/mode/language from the dedicated config IPC.
+                    try {
+                        // @ts-ignore
+                        const sarvamConfig = await window.electronAPI?.getSarvamSttConfig?.();
+                        if (sarvamConfig) {
+                            if (sarvamConfig.model) setSarvamSttModel(sarvamConfig.model);
+                            if (sarvamConfig.mode) setSarvamSttMode(sarvamConfig.mode as any);
+                            if (sarvamConfig.language) setSarvamSttLanguage(sarvamConfig.language);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to load Sarvam config:', e);
+                    }
 
                     setHasNativelyKey(creds.hasNativelyKey || false);
                     // Do NOT pre-populate STT key fields from stored credentials.
@@ -957,7 +977,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         return () => unsubscribe();
     }, []); // mount-once: isOpen is checked inside the callback
 
-    const handleSttProviderChange = async (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper') => {
+    const handleSttProviderChange = async (provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' | 'sarvam') => {
         setSttProvider(provider);
         setIsSttDropdownOpen(false);
         setSttTestStatus('idle');
@@ -970,7 +990,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         }
     };
 
-    const handleSttKeySubmit = async (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox', key: string) => {
+    const handleSttKeySubmit = async (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam', key: string) => {
         if (!key.trim()) return;
         // Reject masked values returned by getStoredCredentials ("sk-...XXXX").
         // These are never valid API keys and every provider rejects them.
@@ -1023,6 +1043,9 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
             } else if (provider === 'soniox') {
                 // @ts-ignore
                 saveResult = await window.electronAPI?.setSonioxApiKey?.(key.trim());
+            } else if (provider === 'sarvam') {
+                // @ts-ignore
+                saveResult = await window.electronAPI?.setSarvamSttApiKey?.(key.trim());
             } else {
                 // @ts-ignore
                 saveResult = await window.electronAPI?.setDeepgramApiKey?.(key.trim());
@@ -1045,6 +1068,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
             else if (provider === 'azure') setHasStoredAzureKey(true);
             else if (provider === 'ibmwatson') setHasStoredIbmWatsonKey(true);
             else if (provider === 'soniox') setHasStoredSonioxKey(true);
+            else if (provider === 'sarvam') setHasStoredSarvamKey(true);
             else setHasStoredDeepgramKey(true);
 
             setSttSaved(true);
@@ -1058,7 +1082,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         }
     };
 
-    const handleRemoveSttKey = async (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox') => {
+    const handleRemoveSttKey = async (provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam') => {
         if (!confirm(`Are you sure you want to remove the ${provider === 'ibmwatson' ? 'IBM Watson' : provider.charAt(0).toUpperCase() + provider.slice(1)} API key?`)) return;
 
         try {
@@ -1092,6 +1116,11 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                 await window.electronAPI?.setSonioxApiKey?.('');
                 setSttSonioxKey('');
                 setHasStoredSonioxKey(false);
+            } else if (provider === 'sarvam') {
+                // @ts-ignore
+                await window.electronAPI?.setSarvamSttApiKey?.('');
+                setSttSarvamKey('');
+                setHasStoredSarvamKey(false);
             } else {
                 // @ts-ignore
                 await window.electronAPI?.setDeepgramApiKey?.('');
@@ -1120,7 +1149,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         const keyMap: Record<string, string> = {
             groq: sttGroqKey, openai: sttOpenaiKey, deepgram: sttDeepgramKey,
             elevenlabs: sttElevenLabsKey, azure: sttAzureKey, ibmwatson: sttIbmKey,
-            soniox: sttSonioxKey,
+            soniox: sttSonioxKey, sarvam: sttSarvamKey,
         };
         const keyToTest = keyMap[sttProvider]?.trim() || '';
 
@@ -1140,6 +1169,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                 case 'azure':      return hasStoredAzureKey;
                 case 'ibmwatson':  return hasStoredIbmWatsonKey;
                 case 'soniox':     return hasStoredSonioxKey;
+                case 'sarvam':     return hasStoredSarvamKey;
                 default:           return false;
             }
         })();
@@ -1218,7 +1248,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                 setUpdateStatus('uptodate');
                 setTimeout(() => setUpdateStatus('idle'), 3000);
             }),
-            window.electronAPI.onUpdateError((err) => {
+            window.electronAPI.onUpdateError((err: unknown) => {
                 console.error('[Settings] Update error:', err);
                 setUpdateStatus('error');
                 setTimeout(() => setUpdateStatus('idle'), 3000);
@@ -1320,8 +1350,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         let cancelled = false;
         const fetchEvents = () => {
             window.electronAPI.getUpcomingEvents()
-                .then(events => { if (!cancelled) setCalendarEvents(events || []); })
-                .catch(err => console.error('[Settings] Failed to fetch upcoming events:', err));
+                .then((events: any) => { if (!cancelled) setCalendarEvents(events || []); })
+                .catch((err: unknown) => console.error('[Settings] Failed to fetch upcoming events:', err));
         };
         fetchEvents();
         const interval = setInterval(fetchEvents, 60_000);
@@ -1335,7 +1365,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
     // device choice "doesn't work".
     useEffect(() => {
         if (!window.electronAPI?.onDeviceSelectionApplied) return;
-        const unsubscribe = window.electronAPI.onDeviceSelectionApplied((payload) => {
+        const unsubscribe = window.electronAPI.onDeviceSelectionApplied((payload: { fellBack: boolean; kind: 'input' | 'output'; requested: string | null; actual: string | null; reason?: string }) => {
             if (payload.fellBack) {
                 setDeviceFallbackNotice({
                     kind: payload.kind,
@@ -1368,18 +1398,18 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         const shouldRun = isOpen && activeTab === 'audio' && !!selectedInput;
 
         if (shouldRun) {
-            const unsubscribe = window.electronAPI?.onAudioTestLevel?.((level) => {
+            const unsubscribe = window.electronAPI?.onAudioTestLevel?.((level: number) => {
                 setMicLevel(Math.max(0, Math.min(100, level * 100)));
             });
 
-            window.electronAPI?.startAudioTest(selectedInput).catch((error) => {
+            window.electronAPI?.startAudioTest(selectedInput).catch((error: unknown) => {
                 console.error("Error starting native microphone test:", error);
                 setMicLevel(0);
             });
 
             return () => {
                 unsubscribe?.();
-                window.electronAPI?.stopAudioTest?.().catch((error) => {
+                window.electronAPI?.stopAudioTest?.().catch((error: unknown) => {
                     console.error("Error stopping native microphone test:", error);
                 });
                 setMicLevel(0);
@@ -1393,7 +1423,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
         // cleanup (StrictMode double-effect, race during device-list refresh,
         // etc.). This is idempotent on the backend (`stopAudioTest` no-ops on
         // a null audioTestCapture).
-        window.electronAPI?.stopAudioTest?.().catch((error) => {
+        window.electronAPI?.stopAudioTest?.().catch((error: unknown) => {
             console.error("Error stopping native microphone test (guard=false):", error);
         });
         setMicLevel(0);
@@ -1711,7 +1741,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                         onClick={() => {
                                                             const newState = !openOnLogin;
                                                             setOpenOnLogin(newState);
-                                                            window.electronAPI?.setOpenAtLogin(newState);
+                                                            window.electronAPI?.setOpenAtLogin?.(newState);
                                                         }}
                                                         className={`w-11 h-6 rounded-full relative transition-colors ${openOnLogin ? 'bg-accent-primary' : 'bg-bg-toggle-switch border border-border-muted'}`}
                                                     >
@@ -2462,6 +2492,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                             { id: 'azure', label: 'Azure Speech', badge: hasStoredAzureKey ? 'Saved' : null, desc: t('Microsoft Cognitive Services STT'), color: 'cyan', icon: <Mic size={14} /> },
                                                             { id: 'ibmwatson', label: 'IBM Watson', badge: hasStoredIbmWatsonKey ? 'Saved' : null, desc: t('IBM Watson cloud STT service'), color: 'indigo', icon: <Mic size={14} /> },
                                                             { id: 'soniox', label: 'Soniox', badge: hasStoredSonioxKey ? 'Saved' : null, recommended: true, desc: t('60+ languages, multilingual, domain context'), color: 'cyan', icon: <Mic size={14} /> },
+                                                            { id: 'sarvam', label: 'Sarvam AI', badge: hasStoredSarvamKey ? 'Saved' : null, recommended: true, desc: t('Indic-first STT — best for Hinglish, Hindi, Tamil, Bengali and 22+ Indian languages'), color: 'emerald', icon: <Mic size={14} /> },
                                                             { id: 'local-whisper', label: 'Local Whisper', badge: null, desc: t('Privacy-first: runs 100% on your device'), color: 'green', icon: <Cpu size={14} /> },
                                                         ]}
                                                     />
@@ -2535,7 +2566,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                             {sttProvider !== 'google' && sttProvider !== 'local-whisper' && sttProvider !== 'natively' && sttProvider !== 'none' && (
                                                 <div className="bg-bg-card rounded-xl border border-border-subtle p-4 space-y-3">
                                                     <label className="text-xs font-medium text-text-secondary block">
-                                                        {sttProvider === 'groq' ? 'Groq' : sttProvider === 'openai' ? 'OpenAI STT' : sttProvider === 'elevenlabs' ? 'ElevenLabs' : sttProvider === 'azure' ? 'Azure' : sttProvider === 'ibmwatson' ? 'IBM Watson' : sttProvider === 'soniox' ? 'Soniox' : 'Deepgram'} API Key
+                                                        {sttProvider === 'groq' ? 'Groq' : sttProvider === 'openai' ? 'OpenAI STT' : sttProvider === 'elevenlabs' ? 'ElevenLabs' : sttProvider === 'azure' ? 'Azure' : sttProvider === 'ibmwatson' ? 'IBM Watson' : sttProvider === 'soniox' ? 'Soniox' : sttProvider === 'sarvam' ? 'Sarvam AI' : 'Deepgram'} API Key
                                                     </label>
                                                     {sttProvider === 'openai' && (
                                                         <p className="text-[10px] text-text-tertiary mb-1.5">
@@ -2552,7 +2583,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                             : sttProvider === 'azure' ? sttAzureKey
                                                                                 : sttProvider === 'ibmwatson' ? sttIbmKey
                                                                                     : sttProvider === 'soniox' ? sttSonioxKey
-                                                                                        : sttDeepgramKey
+                                                                                        : sttProvider === 'sarvam' ? sttSarvamKey
+                                                                                            : sttDeepgramKey
                                                             }
                                                             onChange={(e) => {
                                                                 if (sttProvider === 'groq') setSttGroqKey(e.target.value);
@@ -2561,6 +2593,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                 else if (sttProvider === 'azure') setSttAzureKey(e.target.value);
                                                                 else if (sttProvider === 'ibmwatson') setSttIbmKey(e.target.value);
                                                                 else if (sttProvider === 'soniox') setSttSonioxKey(e.target.value);
+                                                                else if (sttProvider === 'sarvam') setSttSarvamKey(e.target.value);
                                                                 else setSttDeepgramKey(e.target.value);
                                                             }}
                                                             placeholder={
@@ -2576,7 +2609,9 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                                     ? (hasStoredIbmWatsonKey ? '••••••••••••' : t('Enter IBM Watson API key'))
                                                                                     : sttProvider === 'soniox'
                                                                                         ? (hasStoredSonioxKey ? '••••••••••••' : t('Enter Soniox API key'))
-                                                                                        : (hasStoredDeepgramKey ? '••••••••••••' : t('Enter Deepgram API key'))
+                                                                                        : sttProvider === 'sarvam'
+                                                                                            ? (hasStoredSarvamKey ? '••••••••••••' : t('Enter Sarvam AI API key'))
+                                                                                            : (hasStoredDeepgramKey ? '••••••••••••' : t('Enter Deepgram API key'))
                                                             }
                                                             className="flex-1 bg-bg-input border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-tertiary focus:outline-none focus:border-accent-primary transition-colors"
                                                         />
@@ -2585,7 +2620,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                 const keyMap: Record<string, string> = {
                                                                     groq: sttGroqKey, openai: sttOpenaiKey, deepgram: sttDeepgramKey,
                                                                     elevenlabs: sttElevenLabsKey, azure: sttAzureKey, ibmwatson: sttIbmKey,
-                                                                    soniox: sttSonioxKey,
+                                                                    soniox: sttSonioxKey, sarvam: sttSarvamKey,
                                                                 };
                                                                 handleSttKeySubmit(sttProvider as any, keyMap[sttProvider] || '');
                                                             }}
@@ -2593,7 +2628,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                 const keyMap: Record<string, string> = {
                                                                     groq: sttGroqKey, openai: sttOpenaiKey, deepgram: sttDeepgramKey,
                                                                     elevenlabs: sttElevenLabsKey, azure: sttAzureKey, ibmwatson: sttIbmKey,
-                                                                    soniox: sttSonioxKey,
+                                                                    soniox: sttSonioxKey, sarvam: sttSarvamKey,
                                                                 };
                                                                 return (keyMap[sttProvider] || '').trim();
                                                             })()}
@@ -2613,6 +2648,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                                 azure: hasStoredAzureKey,
                                                                 ibmwatson: hasStoredIbmWatsonKey,
                                                                 soniox: hasStoredSonioxKey,
+                                                                sarvam: hasStoredSarvamKey,
                                                             };
                                                             return hasKeyMap[sttProvider] ? (
                                                                 <button
@@ -2625,6 +2661,75 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                                             ) : null;
                                                         })()}
                                                     </div>
+
+                                                    {/* Sarvam AI model/mode/language selectors — visible only when Sarvam is the active STT provider. */}
+                                                    {sttProvider === 'sarvam' && (
+                                                        <div className="space-y-3 pt-2 border-t border-border-subtle">
+                                                            <div>
+                                                                <label className="text-xs font-medium text-text-secondary block mb-1.5">Model</label>
+                                                                <select
+                                                                    value={sarvamSttModel}
+                                                                    onChange={async (e) => {
+                                                                        const next = e.target.value;
+                                                                        setSarvamSttModel(next);
+                                                                        // @ts-ignore
+                                                                        await window.electronAPI?.setSarvamSttModel?.(next);
+                                                                    }}
+                                                                    className="w-full bg-bg-input border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-primary transition-colors"
+                                                                >
+                                                                    <option value="saaras:v3">saaras:v3 — recommended (23 languages, all modes)</option>
+                                                                    <option value="saaras:v4">saaras:v4 — latest (Global + Indian English, 22 Indic)</option>
+                                                                    <option value="saarika:v2.5">saarika:v2.5 — legacy (12 languages, transcribe only)</option>
+                                                                </select>
+                                                            </div>
+                                                            <div>
+                                                                <label className="text-xs font-medium text-text-secondary block mb-1.5">Output Mode</label>
+                                                                <select
+                                                                    value={sarvamSttMode}
+                                                                    onChange={async (e) => {
+                                                                        const next = e.target.value as typeof sarvamSttMode;
+                                                                        setSarvamSttMode(next);
+                                                                        // @ts-ignore
+                                                                        await window.electronAPI?.setSarvamSttMode?.(next);
+                                                                    }}
+                                                                    className="w-full bg-bg-input border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-primary transition-colors"
+                                                                >
+                                                                    <option value="translit">translit — Latin/Roman output (best for WhatsApp-style Hinglish)</option>
+                                                                    <option value="transcribe">transcribe — original-language output with normalization</option>
+                                                                    <option value="codemix">codemix — English in English, Indic in native script</option>
+                                                                    <option value="translate">translate — Indic → English</option>
+                                                                    <option value="verbatim">verbatim — no normalization, fillers preserved</option>
+                                                                </select>
+                                                            </div>
+                                                            <div>
+                                                                <label className="text-xs font-medium text-text-secondary block mb-1.5">Language</label>
+                                                                <select
+                                                                    value={sarvamSttLanguage}
+                                                                    onChange={async (e) => {
+                                                                        const next = e.target.value;
+                                                                        setSarvamSttLanguage(next);
+                                                                        // @ts-ignore
+                                                                        await window.electronAPI?.setSarvamSttLanguage?.(next);
+                                                                    }}
+                                                                    className="w-full bg-bg-input border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent-primary transition-colors"
+                                                                >
+                                                                    <option value="">Auto Detect (default — Natively picks)</option>
+                                                                    <option value="unknown">unknown — explicit auto-detect</option>
+                                                                    <option value="hi-IN">Hindi (India) — hi-IN</option>
+                                                                    <option value="bn-IN">Bengali (India) — bn-IN</option>
+                                                                    <option value="kn-IN">Kannada (India) — kn-IN</option>
+                                                                    <option value="ml-IN">Malayalam (India) — ml-IN</option>
+                                                                    <option value="mr-IN">Marathi (India) — mr-IN</option>
+                                                                    <option value="od-IN">Odia (India) — od-IN</option>
+                                                                    <option value="pa-IN">Punjabi (India) — pa-IN</option>
+                                                                    <option value="ta-IN">Tamil (India) — ta-IN</option>
+                                                                    <option value="te-IN">Telugu (India) — te-IN</option>
+                                                                    <option value="en-IN">English (India) — en-IN</option>
+                                                                    <option value="gu-IN">Gujarati (India) — gu-IN</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
                                                     {/* Azure Region Input */}
                                                     {sttProvider === 'azure' && (
@@ -2786,6 +2891,8 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
                                     <div>
                                         <h3 className="text-lg font-bold text-text-primary mb-1">{t('Audio Configuration')}</h3>
                                         <p className="text-xs text-text-secondary mb-5">{t('Manage input and output devices.')}</p>
+
+                                        <AudioEnhancementToggle />
 
                                         {/* Device-fallback banner: shown when main process couldn't
                                             open the selected device and silently used the default. */}
@@ -3253,3 +3360,105 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({
 };
 
 export default SettingsOverlay;
+
+// ============================================================================
+// Audio Enhancement — JS-side highpass + AGC + compressor toggle.
+// Self-contained: owns its state, debounces writes to the main process via the
+// electronAPI bindings registered in preload.ts. Renders inside the Audio
+// Configuration section of the Audio tab. Kept in this file (rather than a
+// separate component) because it shares no behavior with other Settings tabs
+// and avoids another import edge in a file that already has dozens.
+// ============================================================================
+function AudioEnhancementToggle(): React.JSX.Element | null {
+    const t = useT();
+
+    // Hydrate from main process. Loading is sync today (the IPC handler reads
+    // from SettingsManager which is already populated by the time this component
+    // mounts). If you make it async later, gate the toggle behind the load.
+    const initial = (() => {
+        try {
+            const r = window.electronAPI?.audioEnhancementGetConfig?.();
+            if (r && typeof r.enabled === 'boolean') {
+                return { enabled: r.enabled, strength: r.strength ?? 60 };
+            }
+        } catch { /* fall through */ }
+        return { enabled: false, strength: 60 };
+    })();
+    const [enabled, setEnabled] = useState<boolean>(initial.enabled);
+    const [strength, setStrength] = useState<number>(initial.strength);
+
+    // Persist on every flip + slider change. Cheap (one IPC, one disk write).
+    const push = (next: { enabled: boolean; strength: number }) => {
+        window.electronAPI?.audioEnhancementSetConfig?.(next)?.catch((e: unknown) => {
+            console.warn('[AudioEnhancement] failed to persist:', e);
+        });
+    };
+
+    return (
+        <div className="mt-6 p-4 rounded-xl border border-border-subtle bg-bg-card/60">
+            <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                    <h4 className="text-sm font-medium text-text-primary">
+                        {t('Audio enhancement')}
+                    </h4>
+                    <p className="text-[11px] text-text-secondary mt-1 leading-snug">
+                        {t(
+                            'Cuts low-frequency hum, normalizes quiet speakers, and softens sudden loud sounds before transcription. Off by default — enable when working in noisy rooms.'
+                        )}
+                    </p>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={enabled}
+                    onClick={() => {
+                        const next = !enabled;
+                        setEnabled(next);
+                        push({ enabled: next, strength });
+                    }}
+                    className={`shrink-0 w-11 h-6 rounded-full relative transition-colors ${
+                        enabled ? 'bg-accent-primary' : 'bg-bg-toggle-switch border border-border-muted'
+                    }`}
+                >
+                    <span
+                        className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                            enabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                    />
+                </button>
+            </div>
+
+            {enabled && (
+                <div className="mt-4">
+                    <div className="flex justify-between text-[11px] text-text-secondary mb-1.5 px-0.5">
+                        <span>{t('Strength')}</span>
+                        <span className="tabular-nums">{strength}</span>
+                    </div>
+                    <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={strength}
+                        onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setStrength(next);
+                            push({ enabled, strength: next });
+                        }}
+                        className="w-full h-1.5 bg-bg-input rounded-full appearance-none cursor-pointer
+                                   [&::-webkit-slider-thumb]:appearance-none
+                                   [&::-webkit-slider-thumb]:w-4
+                                   [&::-webkit-slider-thumb]:h-4
+                                   [&::-webkit-slider-thumb]:rounded-full
+                                   [&::-webkit-slider-thumb]:bg-accent-primary"
+                        aria-label={t('Audio enhancement strength')}
+                    />
+                    <div className="flex justify-between text-[10px] text-text-tertiary mt-1 px-0.5">
+                        <span>{t('Subtle')}</span>
+                        <span>{t('Aggressive')}</span>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

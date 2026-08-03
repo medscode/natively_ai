@@ -31,7 +31,7 @@ export const KeyRecorder: React.FC<KeyRecorderProps> = ({ currentKeys, onSave, c
         const shift = e.shiftKey;
 
         // Ignore modifier key presses alone if possible, but we need to show them
-        const modifiers = [];
+        const modifiers: string[] = [];
         if (meta) modifiers.push('⌘');
         if (ctrl) modifiers.push('⌃');
         if (alt) modifiers.push('⌥');

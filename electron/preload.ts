@@ -1030,6 +1030,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   __evalInjectTranscript: (segment: { speaker: string; text: string; timestamp?: number; final?: boolean }) =>
     ipcRenderer.invoke('test-inject-transcript', segment),
   __evalProfileDebug: () => ipcRenderer.invoke('profile:get-status'),
+  onMeetingCopilotOpen: (callback: () => void) => {
+    const subscription = () => callback();
+    ipcRenderer.on('meeting-copilot:open', subscription);
+    return () => { ipcRenderer.removeListener('meeting-copilot:open', subscription); };
+  },
   updateContentDimensions: (dimensions: { width: number; height: number }) =>
     ipcRenderer.invoke('update-content-dimensions', dimensions),
   updateContentDimensionsCentered: (dimensions: { width: number; height: number }) =>
@@ -1369,9 +1374,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setIbmWatsonApiKey: (apiKey: string) => ipcRenderer.invoke('set-ibmwatson-api-key', apiKey),
   setGroqSttModel: (model: string) => ipcRenderer.invoke('set-groq-stt-model', model),
   setSonioxApiKey: (apiKey: string) => ipcRenderer.invoke('set-soniox-api-key', apiKey),
+
+  // Sarvam AI STT
+  getSarvamSttConfig: () => ipcRenderer.invoke('sarvam:get-config'),
+  setSarvamSttApiKey: (apiKey: string) => ipcRenderer.invoke('sarvam:set-api-key', apiKey),
+  setSarvamSttModel: (model: string) => ipcRenderer.invoke('sarvam:set-model', model),
+  setSarvamSttMode: (mode: string) => ipcRenderer.invoke('sarvam:set-mode', mode),
+  setSarvamSttLanguage: (language: string) => ipcRenderer.invoke('sarvam:set-language', language),
   setIbmWatsonRegion: (region: string) => ipcRenderer.invoke('set-ibmwatson-region', region),
   testSttConnection: (
-    provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox',
+    provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam',
     apiKey: string,
     region?: string,
   ) => ipcRenderer.invoke('test-stt-connection', provider, apiKey, region),
@@ -1382,6 +1394,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   localWhisperSetModel: (modelId: string) => ipcRenderer.invoke('local-whisper-set-model', modelId),
   localWhisperSetContextPrompt: (prompt: string) => ipcRenderer.invoke('local-whisper-set-context-prompt', prompt),
   localWhisperGetContextPrompt: () => ipcRenderer.invoke('local-whisper-get-context-prompt'),
+  audioEnhancementSetConfig: (cfg: { enabled: boolean; strength: number }) =>
+    ipcRenderer.invoke('audio-enhancement-set-config', cfg),
+  audioEnhancementGetConfig: () => ipcRenderer.invoke('audio-enhancement-get-config'),
   // In-app recovery: resets the active local-Whisper model + per-channel
   // overrides back to the safe fallback. See electron/ipcHandlers.ts handler.
   localWhisperResetToDefault: () => ipcRenderer.invoke('local-whisper-reset-to-default'),

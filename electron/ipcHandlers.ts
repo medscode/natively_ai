@@ -5723,6 +5723,8 @@ export function initializeIpcHandlers(appState: AppState): void {
         sttAzureKey: creds.azureApiKey ? `sk-...${creds.azureApiKey.slice(-4)}` : '',
         sttIbmKey: creds.ibmWatsonApiKey ? `sk-...${creds.ibmWatsonApiKey.slice(-4)}` : '',
         sttSonioxKey: creds.sonioxApiKey ? `sk-...${creds.sonioxApiKey.slice(-4)}` : '',
+        hasSarvamKey: hasKey(creds.sarvamSttApiKey),
+        sttSarvamKey: creds.sarvamSttApiKey ? `sk-...${creds.sarvamSttApiKey.slice(-4)}` : '',
         openAiSttBaseUrl: creds.openAiSttBaseUrl || '',
         hasTavilyKey: hasKey(creds.tavilyApiKey),
         // Dynamic Model Discovery - preferred models
@@ -5764,6 +5766,8 @@ export function initializeIpcHandlers(appState: AppState): void {
         sttAzureKey: '',
         sttIbmKey: '',
         sttSonioxKey: '',
+        hasSarvamKey: false,
+        sttSarvamKey: '',
       };
     }
   });
@@ -5980,6 +5984,74 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   });
 
+  // Sarvam AI STT — Indic-first provider with native Hinglish support.
+  safeHandle('sarvam:get-config', async () => {
+    try {
+      const { CredentialsManager } = require('./services/CredentialsManager');
+      const cm = CredentialsManager.getInstance();
+      return {
+        apiKey: cm.getSarvamSttApiKey() ?? '',
+        model: cm.getSarvamSttModel(),
+        mode: cm.getSarvamSttMode(),
+        language: cm.getSarvamSttLanguage(),
+      };
+    } catch (error: any) {
+      console.error('Error reading Sarvam config:', error);
+      return { apiKey: '', model: 'saaras:v3', mode: 'translit', language: '' };
+    }
+  });
+
+  safeHandle('sarvam:set-api-key', async (_, apiKey: string) => {
+    try {
+      const { CredentialsManager } = require('./services/CredentialsManager');
+      const persisted = CredentialsManager.getInstance().setSarvamSttApiKey(apiKey);
+      await appState.reconfigureSttProvider();
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) win.webContents.send('credentials-changed');
+      });
+      return sttKeyPersistenceWarning(apiKey, persisted) ?? { success: true };
+    } catch (error: any) {
+      console.error('Error saving Sarvam API key:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('sarvam:set-model', async (_, model: string) => {
+    try {
+      const { CredentialsManager } = require('./services/CredentialsManager');
+      CredentialsManager.getInstance().setSarvamSttModel(model);
+      await appState.reconfigureSttProvider();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error setting Sarvam model:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('sarvam:set-mode', async (_, mode: string) => {
+    try {
+      const { CredentialsManager } = require('./services/CredentialsManager');
+      CredentialsManager.getInstance().setSarvamSttMode(mode);
+      await appState.reconfigureSttProvider();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error setting Sarvam mode:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  safeHandle('sarvam:set-language', async (_, language: string) => {
+    try {
+      const { CredentialsManager } = require('./services/CredentialsManager');
+      CredentialsManager.getInstance().setSarvamSttLanguage(language);
+      await appState.reconfigureSttProvider();
+      return { success: true };
+    } catch (error: any) {
+      console.error('Error setting Sarvam language:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   safeHandle('set-elevenlabs-api-key', async (_, apiKey: string) => {
     try {
       const { CredentialsManager } = require('./services/CredentialsManager');
@@ -6106,7 +6178,7 @@ export function initializeIpcHandlers(appState: AppState): void {
     'test-stt-connection',
     async (
       _,
-      provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox',
+      provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam',
       apiKey: string,
       region?: string,
     ) => {
@@ -6312,6 +6384,33 @@ export function initializeIpcHandlers(appState: AppState): void {
               timeout: 15000,
             },
           );
+        } else if (provider === 'sarvam') {
+          // Sarvam AI: multipart with api-subscription-key header.
+          // Mirror the live RestSTT factory's form fields so a successful test
+          // means the actual transcription call will also succeed.
+          const { SettingsManager } = require('./services/SettingsManager');
+          const sm = SettingsManager.getInstance();
+          const sarvamModel = (sm.get('sarvamSttModel') as string) || 'saaras:v3';
+          const sarvamMode = (sm.get('sarvamSttMode') as string) || 'translit';
+          const sarvamLang = (sm.get('sarvamSttLanguage') as string) || 'unknown';
+
+          const sarvamForm = new FormData();
+          sarvamForm.append('file', testWav, { filename: 'test.wav', contentType: 'audio/wav' });
+          sarvamForm.append('model', sarvamModel);
+          sarvamForm.append('mode', sarvamMode);
+          sarvamForm.append('language_code', sarvamLang);
+
+          await axios.post(
+            'https://api.sarvam.ai/speech-to-text',
+            sarvamForm,
+            {
+              headers: {
+                'api-subscription-key': apiKey,
+                ...sarvamForm.getHeaders(),
+              },
+              timeout: 15000,
+            },
+          );
         } else {
           // Groq / OpenAI: multipart FormData
           let openAiEndpoint = 'https://api.openai.com/v1/audio/transcriptions';
@@ -6463,6 +6562,49 @@ export function initializeIpcHandlers(appState: AppState): void {
       return { prompt: typeof prompt === 'string' ? prompt : '' };
     } catch (e: any) {
       return { success: false, error: e.message, prompt: '' };
+    }
+  });
+
+  // Audio enhancement (JS-side highpass + AGC + soft compressor).
+  // Persists to SettingsManager and pushes live to both capture wrappers
+  // when called mid-meeting. Safe to call any number of times; the
+  // resulting AudioProcessor state is fully determined by the most
+  // recent config.
+  safeHandle('audio-enhancement-set-config', async (_event: any, cfg: { enabled: boolean; strength: number }) => {
+    try {
+      const enabled = !!(cfg && cfg.enabled);
+      const strength = Math.max(0, Math.min(100, Number(cfg?.strength ?? 60)));
+      const safe = { enabled, strength };
+      SettingsManager.getInstance().set('audioEnhancementConfig', safe);
+      // Live push: even if a meeting is in flight, the next chunk picked up
+      // by the AudioProcessor will use the new state. Capture is biquad
+      // + AGC, both bounded — instant changes are inaudible.
+      try {
+        const appState = AppState.getInstance() as any;
+        if (appState.microphoneCapture?.setAudioEnhancementConfig) {
+          appState.microphoneCapture.setAudioEnhancementConfig(safe);
+        }
+        if (appState.systemAudioCapture?.setAudioEnhancementConfig) {
+          appState.systemAudioCapture.setAudioEnhancementConfig(safe);
+        }
+      } catch { /* captures not initialized yet — next start() will pick up the saved config */ }
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  });
+
+  safeHandle('audio-enhancement-get-config', async () => {
+    try {
+      const cfg = SettingsManager.getInstance().get('audioEnhancementConfig');
+      // Default to OFF so we don't surprise users with audio-shape changes.
+      // They can opt in via Settings → Audio.
+      return {
+        enabled: !!(cfg && cfg.enabled),
+        strength: typeof cfg?.strength === 'number' ? cfg.strength : 60,
+      };
+    } catch (e: any) {
+      return { success: false, error: e.message, enabled: false, strength: 60 };
     }
   });
 
@@ -8439,7 +8581,15 @@ export function initializeIpcHandlers(appState: AppState): void {
       }
       const ragManager = appState.getRAGManager();
       if (!ragManager) {
-        return { fallback: true, error: 'RAG manager not initialized' };
+        // Synthesize a streamed response so the renderer's isStreaming placeholder
+        // doesn't hang forever. The renderer's submitQuestion treats `fallback: true`
+        // as "stream listener handles it" and exits without surfacing anything;
+        // emit the same wire-level events the live path emits instead.
+        console.error('[IPC] kb:ask: RAG manager not initialized — check bootstrap logs');
+        const message = "I couldn't reach the knowledge base — please restart the app and try again. (RAG manager not initialized.)";
+        event.sender.send('kb:stream-chunk', { text: message });
+        event.sender.send('kb:stream-complete', {});
+        return { success: true };
       }
       const abortController = new AbortController();
       const queryKey = `kb-${crypto.randomUUID()}`;

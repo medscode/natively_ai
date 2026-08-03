@@ -22,7 +22,7 @@ const ConnectCalendarButton: React.FC<ConnectCalendarButtonProps> = ({ className
 
     useEffect(() => {
         if (window.electronAPI) {
-            window.electronAPI.getCalendarStatus().then(status => {
+            window.electronAPI.getCalendarStatus().then((status: { connected: boolean }) => {
                 setConnected(status.connected);
                 if (status.connected) {
                     onConnect?.();

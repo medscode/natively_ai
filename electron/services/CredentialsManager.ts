@@ -55,7 +55,7 @@ export interface StoredCredentials {
     defaultModel?: string;
     nativelyApiKey?: string;
     // STT Provider settings
-    sttProvider?: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper';
+    sttProvider?: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' | 'sarvam';
     groqSttApiKey?: string;
     groqSttModel?: string;
     openAiSttApiKey?: string;
@@ -69,6 +69,14 @@ export interface StoredCredentials {
     ibmWatsonApiKey?: string;
     ibmWatsonRegion?: string;
     sonioxApiKey?: string;
+    sarvamSttApiKey?: string;
+    /** Sarvam STT model — 'saaras:v3' (default), 'saaras:v4', or 'saarika:v2.5'. */
+    sarvamSttModel?: string;
+    /** Sarvam output mode — 'translit' (Latin script, default), 'transcribe',
+     *  'codemix', 'translate', 'verbatim'. */
+    sarvamSttMode?: string;
+    /** Sarvam language_code (BCP-47 like 'hi-IN', 'bn-IN') or 'unknown' for auto-detect. */
+    sarvamSttLanguage?: string;
     sttLanguage?: string;
     aiResponseLanguage?: string;
     // Tavily Search
@@ -280,7 +288,7 @@ export class CredentialsManager {
         return this.credentials.customProviders || [];
     }
 
-    public getSttProvider(): 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' {
+    public getSttProvider(): 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' | 'sarvam' {
         const provider = this.credentials.sttProvider || 'none';
         // Self-heal: if provider is 'none' but a Natively key exists, the user is in a
         // broken state (key cleared then re-entered via a path that skipped auto-promote,
@@ -523,7 +531,7 @@ export class CredentialsManager {
         console.log('[CredentialsManager] Google Service Account path updated');
     }
 
-    public setSttProvider(provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper'): boolean {
+    public setSttProvider(provider: 'none' | 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'natively' | 'local-whisper' | 'sarvam'): boolean {
         this.credentials.sttProvider = provider;
         const persisted = this.saveCredentials();
         console.log(`[CredentialsManager] STT Provider set to: ${provider}`);
@@ -575,6 +583,48 @@ export class CredentialsManager {
         this.credentials.groqSttModel = model;
         this.saveCredentials();
         console.log(`[CredentialsManager] Groq STT Model set to: ${model}`);
+    }
+
+    public getSarvamSttApiKey(): string | undefined {
+        return this.credentials.sarvamSttApiKey;
+    }
+
+    public getSarvamSttModel(): string {
+        return this.credentials.sarvamSttModel || 'saaras:v3';
+    }
+
+    public getSarvamSttMode(): string {
+        return this.credentials.sarvamSttMode || 'translit';
+    }
+
+    public getSarvamSttLanguage(): string {
+        return this.credentials.sarvamSttLanguage || '';
+    }
+
+    public setSarvamSttApiKey(key: string): boolean {
+        const trimmed = (key || '').trim();
+        this.credentials.sarvamSttApiKey = trimmed || undefined;
+        const persisted = this.saveCredentials();
+        console.log('[CredentialsManager] Sarvam STT API Key updated');
+        return persisted;
+    }
+
+    public setSarvamSttModel(model: string): void {
+        this.credentials.sarvamSttModel = model;
+        this.saveCredentials();
+        console.log(`[CredentialsManager] Sarvam STT Model set to: ${model}`);
+    }
+
+    public setSarvamSttMode(mode: string): void {
+        this.credentials.sarvamSttMode = mode;
+        this.saveCredentials();
+        console.log(`[CredentialsManager] Sarvam STT Mode set to: ${mode}`);
+    }
+
+    public setSarvamSttLanguage(language: string): void {
+        this.credentials.sarvamSttLanguage = language;
+        this.saveCredentials();
+        console.log(`[CredentialsManager] Sarvam STT Language set to: ${language}`);
     }
 
     public setElevenLabsApiKey(key: string): boolean {
@@ -646,7 +696,7 @@ export class CredentialsManager {
      * renderer state — the masked pre-population regression from #318 was
      * caused by exactly that pattern. This getter is test-time only.
      */
-    public getStoredSttKeyForProvider(provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox'): string | undefined {
+    public getStoredSttKeyForProvider(provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam'): string | undefined {
         switch (provider) {
             case 'groq':       return this.credentials.groqSttApiKey;
             case 'openai':     return this.credentials.openAiSttApiKey;
@@ -655,6 +705,7 @@ export class CredentialsManager {
             case 'azure':      return this.credentials.azureApiKey;
             case 'ibmwatson':  return this.credentials.ibmWatsonApiKey;
             case 'soniox':     return this.credentials.sonioxApiKey;
+            case 'sarvam':     return this.credentials.sarvamSttApiKey;
         }
     }
 
@@ -1179,7 +1230,7 @@ export const USE_STORED_KEY_SENTINEL = '__USE_STORED__';
  * resolution contract independently verifiable (M-1 from the pre-release review).
  */
 export function resolveSttTestKey(
-    provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox',
+    provider: 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'soniox' | 'sarvam',
     apiKey: string | undefined | null,
 ): { ok: true; apiKey: string } | { ok: false; error: string } {
     if (apiKey === USE_STORED_KEY_SENTINEL) {
