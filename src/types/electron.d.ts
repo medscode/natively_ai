@@ -82,7 +82,7 @@ export interface ElectronAPI {
   showOverlay: () => Promise<void>
   hideOverlay: () => Promise<void>
   getMeetingActive: () => Promise<boolean>
-  onMeetingStateChanged: (callback: (data: { isActive: boolean }) => void) => () => void
+  onMeetingStateChanged: (callback: (data: { isActive: boolean; meetingId: string | null }) => void) => () => void
   onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
   onEnsureExpanded: (callback: () => void) => () => void
   openExternal: (url: string) => Promise<void>
@@ -101,6 +101,39 @@ export interface ElectronAPI {
   toggleOverlayMousePassthrough: () => Promise<{ success: boolean; enabled: boolean }>
   getOverlayMousePassthrough: () => Promise<boolean>
   onOverlayMousePassthroughChanged: (callback: (enabled: boolean) => void) => () => void
+  // Phase UI: compact overlay bounds.
+  overlayGetBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>
+  overlaySetBounds: (
+    bounds: { x: number; y: number; width: number; height: number },
+    opts?: { snap?: boolean; snapThreshold?: number },
+  ) => Promise<{ x: number; y: number; width: number; height: number }>
+  // Phase P: persistent suggestion history.
+  suggestionSave: (payload: {
+    meetingId: string;
+    item: {
+      suggestionId: string;
+      text: string;
+      citations?: unknown[];
+      source: 'live' | 'mock' | 'manual';
+      firedAt: number;
+      question?: string;
+    };
+  }) => Promise<{ success: boolean }>
+  chatGetSuggestions: (meetingId: string) => Promise<Array<{
+    suggestionId: string;
+    text: string;
+    citations: unknown[];
+    source: 'live' | 'mock' | 'manual';
+    firedAt: number;
+    question?: string;
+  }>>
+  // Sparkles button: invoke the SuggestionPipeline directly so manual
+  // triggers use the same path as Suggest-mode auto-triggers.
+  suggestionRunOnce: (question: string) => Promise<{ success: boolean }>
+  // Phase D / Bug D: real meeting UUID instead of 'live-meeting-current'.
+  // Allocated on startMeeting, broadcast via meeting-state-changed, used by
+  // the SuggestionPipeline so suggestions persist correctly to the meeting.
+  getCurrentMeetingId: () => Promise<string>
   setDisguise: (mode: 'terminal' | 'settings' | 'activity' | 'none') => Promise<{ success: boolean; error?: string }>
   getDisguise: () => Promise<'none' | 'terminal' | 'settings' | 'activity'>
   onDisguiseChanged: (callback: (mode: 'terminal' | 'settings' | 'activity' | 'none') => void) => () => void

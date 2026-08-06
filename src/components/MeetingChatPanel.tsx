@@ -177,11 +177,38 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
     const [showKbPicker, setShowKbPicker] = useState(false);
     const [showPersonaPicker, setShowPersonaPicker] = useState(false);
     const [activePersona, setActivePersona] = useState('Manual');
-    const [proactiveSuggestion, setProactiveSuggestion] = useState<{
+    // Suggestion history — each STT-final trigger appends a new entry. Inline
+    // append, newest at bottom, auto-scrolls. Each entry has a stable id so
+    // click-to-fill can remove just that card. Capped at MAX_SUGGESTIONS to
+    // bound memory + render cost during long meetings.
+    interface SuggestionItem {
+        id: string;
         suggestion: string;
         citations?: Citation[];
         source: 'live' | 'mock';
-    } | null>(null);
+        at: number;
+        question?: string;
+    }
+    const MAX_SUGGESTIONS = 50;
+    const [proactiveSuggestions, setProactiveSuggestions] = useState<SuggestionItem[]>([]);
+    // Tracks the id of the suggestion currently streaming so subsequent token
+    // events update the SAME entry instead of appending a new one every token.
+    const [streamingId, setStreamingId] = useState<string | null>(null);
+    // Manual-mode ambient slot: in Manual mode the pipeline keeps firing in
+    // the background, but the streamed events are stashed here (single slot,
+    // most-recent-wins) instead of being appended to proactiveSuggestions.
+    // Clicking the Sparkles button promotes this slot into a visible bubble
+    // so the user sees the suggestion for the most recent topic they paused
+    // on. In Suggest mode this stays null (everything is visible directly).
+    const [pendingSuggestion, setPendingSuggestion] = useState<SuggestionItem | null>(null);
+    // Single-slot alias for places in the JSX that still expect a nullable.
+    const proactiveSuggestion = streamingId
+        ? proactiveSuggestions.find(s => s.id === streamingId) ?? null
+        : null;
+    const setProactiveSuggestion = (_value: any) => {
+        // Legacy single-slot setter is a no-op now; the coordinator drives
+        // setProactiveSuggestions directly. Kept so older code paths don't crash.
+    };
     // Live transcript strip in the panel footer — pulls from chatGetTranscriptContext
     // (last 120s of conversation). Default ON; footer toggle hides it.
     const [liveTranscriptEnabled, setLiveTranscriptEnabled] = useState(true);
@@ -191,9 +218,66 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
     // avoids re-mounting the polling effect on every transcript update.
     const liveSegmentsRef = useRef<typeof liveSegments>(liveSegments);
     useEffect(() => { liveSegmentsRef.current = liveSegments; }, [liveSegments]);
+
+    // Phase D / Bug D: cache the real meeting UUID from main process. Used by
+    // suggestionSave so we don't fall back to the virtual 'live-meeting-current'
+    // id (which gets cascade-deleted at meeting end). Clear the cache when
+    // the broadcast reports meetingId=null so a stale id from a prior meeting
+    // can't leak into the next session's saves.
+    useEffect(() => {
+        try {
+            const api: any = (window as any).electronAPI;
+            const unsub = api?.onMeetingStateChanged?.((state: any) => {
+                if (state?.meetingId) {
+                    (window as any).__currentMeetingId = state.meetingId;
+                } else if (state && (state.meetingId === null || state.isActive === false)) {
+                    // Meeting ended — drop the cached id so the next meeting
+                    // (or a panel reopen mid-teardown) can't save under the
+                    // prior meeting's id and orphan the row.
+                    delete (window as any).__currentMeetingId;
+                }
+            });
+            // Initial fetch in case we missed the event.
+            api?.getCurrentMeetingId?.().then((id: string) => {
+                if (id) (window as any).__currentMeetingId = id;
+            }).catch(() => {});
+            return () => { unsub?.(); };
+        } catch { /* ignore */ }
+    }, []);
+
+    // Auto-scroll the suggestion history to the newest entry as cards stream in.
+    useEffect(() => {
+        if (proactiveSuggestions.length === 0) return;
+        const t = setTimeout(() => {
+            suggestionsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }, 60);
+        return () => clearTimeout(t);
+    }, [proactiveSuggestions.length, proactiveSuggestions[proactiveSuggestions.length - 1]?.suggestion]);
+
+    // Mode-switch flush: when the user toggles Manual → Suggest, promote the
+    // stashed pending suggestion (if any) into the visible bubble list so it
+    // doesn't get orphaned. Suggest → Manual clears the visible list of any
+    // auto-streamed bubbles (they stay in the DB either way).
+    useEffect(() => {
+        if (mode === 'suggest' && pendingSuggestion) {
+            const revealed = pendingSuggestion;
+            setPendingSuggestion(null);
+            setProactiveSuggestions(prev => {
+                const next = [...prev, revealed];
+                if (next.length > MAX_SUGGESTIONS) next.shift();
+                return next;
+            });
+        } else if (mode === 'manual') {
+            setProactiveSuggestions([]);
+            setStreamingId(null);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mode]);
+
     const [liveDot, setLiveDot] = useState(false);
     const streamBuffer = useStreamBuffer();
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const suggestionsEndRef = useRef<HTMLDivElement>(null);
     const coordinatorRef = useRef<SuggestModeCoordinator | null>(null);
     const lastQuestionRef = useRef('');
 
@@ -308,22 +392,122 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             coordinatorRef.current = null;
             return;
         }
-        if (mode !== 'suggest') {
-            coordinatorRef.current?.stop();
-            coordinatorRef.current = null;
-            return;
-        }
+        // The coordinator subscribes to `suggestion:progressive` IPC events in
+        // BOTH modes now. In Suggest mode the pipeline auto-fires on transcript
+        // finals; in Manual mode only the Sparkles button fires it. The
+        // coordinator's handleEvent no longer gates on mode, so both paths
+        // render the streamed bubble + persist it via suggestionSave.
+        // Phase D / Bug D: read the real meeting UUID from main process instead
+        // of using the literal 'live-meeting-current' which causes FK cascade
+        // wipes when the meeting row is deleted at end-of-meeting.
+        // getCurrentMeetingId returns a Promise — read it synchronously from
+        // the cached field if available, otherwise default to the legacy id.
+        const currentMeetingId: string =
+            (window as any).__currentMeetingId ?? 'live-meeting-current';
         const coord = new SuggestModeCoordinator({
-            onSuggestion: (s) => setProactiveSuggestion(s),
-            getMode: () => mode,
-            getWebSearch: () => webSearch,
-            getLastUserMessage: () => lastQuestionRef.current,
-            getActiveTranscript: async () => {
-                try {
-                    const r = await window.electronAPI?.chatGetTranscriptContext?.();
-                    return (r?.available && r.text) ? r.text : '';
-                } catch { return ''; }
+            onSuggestion: (s) => {
+                // Append-or-update logic. The coordinator fires once per token
+                // for streaming suggestions, plus once on done. We dedupe by
+                // timestamp + source so the same suggestion doesn't get appended
+                // multiple times when only its `at` differs by a few ms.
+                //
+                // Mode routing:
+                //   suggest → append to proactiveSuggestions (visible bubbles)
+                //   manual  → overwrite pendingSuggestion (single-slot, most-
+                //             recent-wins). The Sparkles button reveals this.
+                const isUpdateOfPending = (cur: SuggestionItem | null) =>
+                    !!cur && cur.source === s.source && Math.abs(cur.at - s.at) < 50;
+
+                if (mode === 'manual') {
+                    setPendingSuggestion(cur => {
+                        if (cur && isUpdateOfPending(cur)) {
+                            const updated: SuggestionItem = { ...cur, suggestion: s.suggestion, citations: s.citations, question: s.question ?? cur.question };
+                            window.electronAPI?.suggestionSave?.({
+                                meetingId: currentMeetingId,
+                                item: {
+                                    suggestionId: updated.id,
+                                    text: updated.suggestion,
+                                    citations: updated.citations ?? [],
+                                    source: updated.source,
+                                    firedAt: updated.at,
+                                    question: updated.question,
+                                },
+                            });
+                            return updated;
+                        }
+                        const item: SuggestionItem = { id: `${s.at}-pending`, suggestion: s.suggestion, citations: s.citations, source: s.source, at: s.at, question: s.question };
+                        // Persist on every update so the Suggestions tab also
+                        // sees manual-mode reveals after meeting end.
+                        window.electronAPI?.suggestionSave?.({
+                            meetingId: currentMeetingId,
+                            item: {
+                                suggestionId: item.id,
+                                text: item.suggestion,
+                                citations: item.citations ?? [],
+                                source: item.source,
+                                firedAt: item.at,
+                                question: item.question,
+                            },
+                        });
+                        return item;
+                    });
+                    return;
+                }
+
+                setProactiveSuggestions(prev => {
+                    // Find the last entry that's currently streaming (same at-ts within 50ms).
+                    const lastIdx = prev.length - 1;
+                    const last = lastIdx >= 0 ? prev[lastIdx] : null;
+                    if (last && last.source === s.source && Math.abs(last.at - s.at) < 50) {
+                        // Update in-place.
+                        const updated = [...prev];
+                        updated[lastIdx] = { ...last, suggestion: s.suggestion, citations: s.citations, question: s.question ?? last.question };
+                        // Phase P: persist on every update (UNIQUE dedupes by id).
+                        // Final text wins because each new token overwrites prior text.
+                        window.electronAPI?.suggestionSave?.({
+                            meetingId: currentMeetingId,
+                            item: {
+                                suggestionId: updated[lastIdx].id,
+                                text: updated[lastIdx].suggestion,
+                                citations: updated[lastIdx].citations ?? [],
+                                source: updated[lastIdx].source,
+                                firedAt: updated[lastIdx].at,
+                                question: updated[lastIdx].question,
+                            },
+                        });
+                        return updated;
+                    }
+                    // Otherwise append a new entry. Cap at MAX_SUGGESTIONS, dropping oldest.
+                    const id = `${s.at}-${prev.length}`;
+                    const item: SuggestionItem = {
+                        id,
+                        suggestion: s.suggestion,
+                        citations: s.citations,
+                        source: s.source,
+                        at: s.at,
+                        question: s.question,
+                    };
+                    setStreamingId(id);
+                    const next = [...prev, item];
+                    if (next.length > MAX_SUGGESTIONS) next.shift();
+                    // Phase P: persist the new bubble. Use the timestamp-based id
+                    // so re-emitting the same suggestion idempotently overwrites
+                    // rather than appending duplicates.
+                    window.electronAPI?.suggestionSave?.({
+                        meetingId: currentMeetingId,
+                        item: {
+                            suggestionId: item.id,
+                            text: item.suggestion,
+                            citations: item.citations ?? [],
+                            source: item.source,
+                            firedAt: item.at,
+                            question: item.question,
+                        },
+                    });
+                    return next;
+                });
             },
+            getMode: () => mode,
         });
         coord.start();
         coordinatorRef.current = coord;
@@ -332,6 +516,56 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             coordinatorRef.current = null;
         };
     }, [mode, isOpen, webSearch]);
+
+    // Phase P: replay persisted suggestion history on mount. The bubble
+    // history lives in SQLite keyed by meetingId; on every panel open we
+    // fetch and seed proactiveSuggestions so the user sees their previous
+    // suggestions (e.g. after a page refresh or app restart mid-meeting).
+    // Bug-fix: read the real meeting UUID from the cached window field
+    // populated by the meeting-state-changed listener above, instead of
+    // hardcoding 'live-meeting-current' (which never matches because live
+    // suggestions are saved under the real uuid).
+    const replayAttemptedRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!isOpen) return;
+        const meetingId: string =
+            (window as any).__currentMeetingId ?? 'live-meeting-current';
+        if (replayAttemptedRef.current === meetingId) return;
+        replayAttemptedRef.current = meetingId;
+        let cancelled = false;
+        (async () => {
+            try {
+                const persisted = await window.electronAPI?.chatGetSuggestions?.(meetingId);
+                if (cancelled || !persisted || persisted.length === 0) return;
+                setProactiveSuggestions((prev) => {
+                    // De-dupe by suggestionId so live suggestions that arrive
+                    // during replay don't get appended twice.
+                    const existingIds = new Set(prev.map((s) => s.id));
+                    const additions: SuggestionItem[] = [];
+                    for (const p of persisted) {
+                        if (!existingIds.has(p.suggestionId)) {
+                            additions.push({
+                                id: p.suggestionId,
+                                suggestion: p.text,
+                                citations: (p.citations as any) ?? undefined,
+                                source: p.source,
+                                at: p.firedAt,
+                            });
+                            existingIds.add(p.suggestionId);
+                        }
+                    }
+                    if (additions.length === 0) return prev;
+                    additions.sort((a, b) => a.at - b.at);
+                    const next = [...prev, ...additions];
+                    if (next.length > MAX_SUGGESTIONS) next.splice(0, next.length - MAX_SUGGESTIONS);
+                    return next;
+                });
+            } catch (e) {
+                // Non-fatal: just skip replay.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isOpen]);
 
     // Submit initial query when overlay opens — but only AFTER activeCase is loaded,
     // so the chat is grounded in the right client case instead of running before
@@ -490,7 +724,9 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 setChatState('idle');
                 setMessages([]);
                 setErrorMessage(null);
-                setProactiveSuggestion(null);
+                setProactiveSuggestions([]);
+                setStreamingId(null);
+                setPendingSuggestion(null);
             }}
         >
             {isOpen && (console.log('[MeetingChatPanel] rendering, isOpen=true, panelHeight=', panelHeight),
@@ -558,7 +794,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                         </div>
 
                         {/* Messages area */}
-                        <div className="flex-1 overflow-y-auto px-6 py-4 pb-56 custom-scrollbar">
+                        <div className="flex-1 overflow-y-auto px-6 py-4 pb-40 custom-scrollbar">
                             {messages.length === 0 && (
                                 <div className="text-center text-white/70 py-12">
                                     <Sparkles size={32} className="mx-auto mb-3 opacity-50 text-indigo-300" />
@@ -570,6 +806,81 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     )}
                                 </div>
                             )}
+                            {/* Proactive Suggestion History (4-stage progressive, append-only).
+                                Each STT-final trigger creates a NEW card that streams in,
+                                then persists in the list. Old cards stay visible above chat
+                                messages; the panel scrolls to show them. Click a card to
+                                fill the input box AND remove that card from history. Capped
+                                at MAX_SUGGESTIONS (oldest dropped first). Auto-scrolls to
+                                the newest entry. */}
+                            <div ref={suggestionsEndRef} className="mb-3 space-y-2">
+                                <AnimatePresence initial={false}>
+                                    {proactiveSuggestions.map((s) => {
+                                        const hasText = s.suggestion && s.suggestion.length > 0;
+                                        const isStreaming = s.id === streamingId && s.source === 'live' && !s.citations;
+                                        return (
+                                            <motion.div
+                                                key={s.id}
+                                                layout
+                                                initial={{ opacity: 0, y: 6 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ duration: 0.22, ease: 'easeOut' }}
+                                                className="group relative pl-3 pr-9 py-2 rounded-lg border-l-2 border-indigo-500/60 bg-white/[0.02] text-[13px] text-white/90 leading-relaxed hover:bg-white/[0.04] transition-colors cursor-pointer"
+                                                onClick={() => {
+                                                    // Phase P: click fills input but does NOT remove the
+                                                    // bubble. Cards persist across the meeting and across
+                                                    // app restarts (replayed from SQLite via getSuggestions).
+                                                    if (hasText) setQuery(s.suggestion);
+                                                }}
+                                                title="Click to insert into the prompt box"
+                                            >
+                                                {/* Streaming caret — only on the actively-streaming card */}
+                                                {hasText ? (
+                                                    <div className="whitespace-pre-wrap break-words">
+                                                        {s.suggestion}
+                                                        {isStreaming && <span className="inline-block w-1.5 h-3 ml-0.5 align-middle bg-indigo-300 animate-pulse" />}
+                                                    </div>
+                                                ) : isStreaming ? (
+                                                    <div className="text-white/50 italic">Generating…</div>
+                                                ) : null}
+
+                                                {/* Citations — small chip-style badges below the bubble */}
+                                                {s.citations && s.citations.length > 0 && (
+                                                    <div className="mt-1.5 flex flex-wrap gap-1">
+                                                        {s.citations.map(c => <CitationBadge key={c.id} c={c} />)}
+                                                    </div>
+                                                )}
+
+                                                {/* Copy button — slides in on hover, top-right */}
+                                                {hasText && (
+                                                    <button
+                                                        type="button"
+                                                        className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10 text-white/60 hover:text-white"
+                                                        title="Copy to clipboard"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            try {
+                                                                navigator.clipboard?.writeText(s.suggestion);
+                                                            } catch { /* ignore */ }
+                                                        }}
+                                                    >
+                                                        <Copy size={11} />
+                                                    </button>
+                                                )}
+
+                                                {/* Streaming indicator dots — top-left, only when actively streaming */}
+                                                {isStreaming && (
+                                                    <span className="absolute top-1.5 left-1.5 flex gap-0.5" aria-label="streaming">
+                                                        <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '0ms' }} />
+                                                        <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '120ms' }} />
+                                                        <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '240ms' }} />
+                                                    </span>
+                                                )}
+                                            </motion.div>
+                                        );
+                                    })}
+                                </AnimatePresence>
+                            </div>
                             {messages.map((msg) => (
                                 msg.role === 'user'
                                     ? <UserMessage key={msg.id} content={msg.content} />
@@ -591,28 +902,6 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                         {/* Floating Footer */}
                         <div className="absolute bottom-0 left-0 right-0 p-6 flex justify-center z-50 pointer-events-none">
                             <div className="w-full max-w-[440px] relative group pointer-events-auto">
-
-                                {/* Proactive Suggestion Pill (appears above input when Suggest Mode is on) */}
-                                {proactiveSuggestion && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: 6 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        transition={{ duration: 0.2 }}
-                                        className="mb-2 p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-[13px] text-white cursor-pointer"
-                                        onClick={() => { setQuery(proactiveSuggestion.suggestion); setProactiveSuggestion(null); }}
-                                    >
-                                        <div className="flex items-center gap-1.5 text-[11px] text-indigo-300 font-medium mb-1">
-                                            <Sparkles size={11} />
-                                            <span>{proactiveSuggestion.source === 'live' ? 'Live suggestion' : 'Suggested follow-up'}</span>
-                                        </div>
-                                        <div className="leading-relaxed">{proactiveSuggestion.suggestion}</div>
-                                        {proactiveSuggestion.citations && proactiveSuggestion.citations.length > 0 && (
-                                            <div className="mt-1.5 flex flex-wrap gap-1">
-                                                {proactiveSuggestion.citations.map(c => <CitationBadge key={c.id} c={c} />)}
-                                            </div>
-                                        )}
-                                    </motion.div>
-                                )}
 
                                 {/* Live transcript strip — last few segments from the
                                     rolling transcript. Hidden when the toggle is off. */}
@@ -770,30 +1059,59 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         )}
                                     </div>
 
-                                    {/* Right side buttons: Sparkles + Send */}
+                                    {/* Right side buttons: Sparkles (Manual mode only) + Send.
+                                        In Suggest mode suggestions stream automatically from the
+                                        live transcript, so the manual-trigger button is redundant. */}
                                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                                        {mode === 'manual' && (
                                         <button
                                             onClick={async () => {
-                                                const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content;
-                                                const question = (query.trim() || lastUser || '').trim();
-                                                if (!question) {
-                                                    setErrorMessage('Type a question first, then click Suggest.');
+                                                // Manual-mode ambient reveal: if the input is empty
+                                                // AND the pipeline has a stashed pending suggestion
+                                                // (the most recent one it has been quietly
+                                                // generating in the background), promote it to a
+                                                // visible bubble. No typing, no fresh LLM call —
+                                                // just reveal the latest ambient result.
+                                                const typed = query.trim();
+                                                if (!typed && pendingSuggestion) {
+                                                    const revealed = pendingSuggestion;
+                                                    setPendingSuggestion(null);
+                                                    setProactiveSuggestions(prev => {
+                                                        const next = [...prev, revealed];
+                                                        if (next.length > MAX_SUGGESTIONS) next.shift();
+                                                        return next;
+                                                    });
+                                                    setStreamingId(null);
                                                     return;
                                                 }
+                                                // Otherwise, with a typed question OR no pending
+                                                // available, ask the pipeline to generate a fresh
+                                                // one. Resolution priority: 1) input, 2) last
+                                                // interviewer final, 3) last user final, 4) last
+                                                // chat user message. Silent no-op if all empty.
+                                                let resolved = typed;
+                                                if (!resolved) {
+                                                    const segs = liveSegmentsRef.current || [];
+                                                    const lastInterviewer = [...segs].reverse().find(s => s.role === 'interviewer' && s.text?.trim());
+                                                    const lastUserSeg = [...segs].reverse().find(s => s.role === 'user' && s.text?.trim());
+                                                    const lastChat = [...messages].reverse().find(m => m.role === 'user')?.content;
+                                                    resolved = (lastInterviewer?.text || lastUserSeg?.text || lastChat || '').trim();
+                                                }
+                                                if (!resolved) return;
                                                 setErrorMessage(null);
-                                                const result = await window.electronAPI?.kbSuggest?.({ question });
-                                                if (!result?.success) {
-                                                    setErrorMessage(result?.error || 'KB suggestion failed. Make sure a client case is active.');
+                                                const result = await window.electronAPI?.suggestionRunOnce?.(resolved);
+                                                if (result && !result.success && result.error) {
+                                                    setErrorMessage(result.error);
                                                     return;
                                                 }
-                                                if (result.suggestion) setProactiveSuggestion({ suggestion: result.suggestion, citations: result.citations, source: 'live' });
-                                                setQuery('');
+                                                if (typed) setQuery('');
                                             }}
-                                            title="Generate a KB-grounded suggestion"
+                                            title="Reveal the latest ambient suggestion (or generate a fresh one from your text)"
                                             className="p-1.5 rounded-full transition-all border border-white/5 bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25"
                                         >
                                             <Sparkles size={14} />
                                         </button>
+                                        )}
                                         <button
                                             onClick={() => {
                                                 if (query.trim()) {

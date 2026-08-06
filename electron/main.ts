@@ -129,12 +129,6 @@ try {
  */
 let _cachedSignedBuild: boolean | null = null
 
-// Live KB-suggestion rate limit (auto-fired from the STT interviewer-final hook).
-// At most 1 fire per LIVE_SUGGEST_COOLDOWN_MS, and skip identical back-to-back
-// questions so we don't query the KB twice for the same turn.
-const LIVE_SUGGEST_COOLDOWN_MS = 4000;
-let _lastLiveSuggestAt = 0;
-let _lastLiveSuggestQ = '';
 function isSignedBuild(): boolean {
   if (_cachedSignedBuild !== null) return _cachedSignedBuild
   try {
@@ -1045,6 +1039,55 @@ export class AppState {
   public cropperWindowHelper: CropperWindowHelper
   private screenshotHelper: ScreenshotHelper
   public processingHelper: ProcessingHelper
+  // Phase UI: saved overlay bounds from settings, applied on next overlay open.
+  private _pendingOverlayBounds: { x: number; y: number; width: number; height: number } | null = null;
+  public getSettingsManager() { return SettingsManager.getInstance(); }
+
+  // Phase P: persistent suggestion history facade.
+  private suggestionStore: any = null;
+  public getSuggestionStore() {
+    if (!this.suggestionStore) {
+      try {
+        const { SuggestionStore } = require('./services/SuggestionStore');
+        const db = DatabaseManager.getInstance();
+        this.suggestionStore = new SuggestionStore(db);
+      } catch (e) {
+        console.warn('[AppState] getSuggestionStore lazy init failed:', (e as any)?.message);
+      }
+    }
+    return this.suggestionStore;
+  }
+
+  /**
+   * Phase D / Bug D: real meeting UUID allocated in startMeeting().
+   * Replaces the hardcoded 'live-meeting-current' that was being cascade-
+   * deleted at meeting-end via RAGManager.deleteMeetingData.
+   */
+  private _currentMeetingId: string | null = null;
+
+  /**
+   * Returns the meeting id for suggestion persistence. Uses the same
+   * 'live-meeting-current' virtual ID convention as LiveRAGIndexer for
+   * in-progress meetings; this gets resolved to a real UUID on meeting-end
+   * via MeetingPersistence.stopMeeting (we keep the virtual id until then).
+   */
+  public getCurrentMeetingId(): string {
+    return this._currentMeetingId ?? 'live-meeting-current';
+  }
+
+  /**
+   * Accessor for the live SuggestionPipeline (so the Sparkles button IPC
+   * can fire it without going through the legacy kb:suggest path).
+   */
+  public getSuggestionPipeline() {
+    try {
+      const { getSuggestionPipeline } = require('./rag/suggest/SuggestionPipeline');
+      return getSuggestionPipeline();
+    } catch (e: any) {
+      console.warn('[AppState] getSuggestionPipeline failed:', e?.message);
+      return null;
+    }
+  }
 
   private intelligenceManager: IntelligenceManager
   private themeManager: ThemeManager
@@ -1181,10 +1224,21 @@ export class AppState {
     this.disguiseMode = normalizeDisguiseMode(settingsManager.get('disguiseMode'));
     this._verboseLogging = settingsManager.get('verboseLogging') ?? true;
     setVerboseLoggingFlag(this._verboseLogging);
+    // Phase UI: restore last overlay bounds so the panel reopens where the user left it.
+    const savedOverlayBounds = settingsManager.get('overlayBounds') as
+      { x: number; y: number; width: number; height: number } | undefined;
+    if (savedOverlayBounds && typeof savedOverlayBounds.x === 'number') {
+      this._pendingOverlayBounds = savedOverlayBounds;
+    }
     console.log(`[AppState] Initialized with isUndetectable=${this.isUndetectable}, disguiseMode=${this.disguiseMode}, verboseLogging=${this._verboseLogging}`);
 
     // 2. Initialize Helpers with loaded state
     this.windowHelper = new WindowHelper(this)
+    // Phase UI: hydrate saved overlay bounds so the panel reopens where the user left it.
+    if (this._pendingOverlayBounds) {
+      this.windowHelper.applyInitialOverlayBounds(this._pendingOverlayBounds);
+      this._pendingOverlayBounds = null;
+    }
     this.settingsWindowHelper = new SettingsWindowHelper()
     this.modelSelectorWindowHelper = new ModelSelectorWindowHelper()
     this.cropperWindowHelper = new CropperWindowHelper()
@@ -1442,7 +1496,20 @@ export class AppState {
           // Open the Meeting Copilot panel. Works even when the overlay window
           // is in mouse-passthrough mode because globalShortcut bypasses the
           // OS-level click-through that setIgnoreMouseEvents(true) installs.
+          // Also bring the main window to front + focus so the panel is
+          // visible even if Chrome / Zoom / Meet currently has focus.
           const mainWindow = this.getMainWindow();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (!mainWindow.isVisible()) {
+              this.toggleMainWindow();
+            }
+            mainWindow.show();
+            mainWindow.focus();
+            // On macOS, restore() pulls the window out of the minimized state.
+            if (process.platform === 'darwin' && typeof (mainWindow as any).restore === 'function') {
+              (mainWindow as any).restore();
+            }
+          }
           this.sendToWindow(mainWindow, 'meeting-copilot:open', {});
         } else if (actionId === 'general:take-screenshot') {
           // Route to renderer via global-shortcut so the renderer handles the
@@ -1887,7 +1954,12 @@ export class AppState {
   }
 
   private broadcastMeetingState(): void {
-    this.broadcast('meeting-state-changed', { isActive: this.isMeetingActive });
+    this.broadcast('meeting-state-changed', {
+      isActive: this.isMeetingActive,
+      // Phase D: include the real meeting UUID so renderers can persist
+      // suggestions to the correct (non-virtual) meeting id.
+      meetingId: this._currentMeetingId,
+    });
   }
 
   // Public so the reference-file upload IPC handler can kick a retry for a
@@ -2030,6 +2102,17 @@ export class AppState {
         });
         this.ragManager.setLLMHelper(this.processingHelper.getLLMHelper());
         this.ragManager.setIntelligenceManager(this.intelligenceManager);
+
+        // Phase P: persistent suggestion history facade. Pass the DatabaseManager
+        // instance itself, NOT the raw better-sqlite3 handle (db.getDb()) — the
+        // store's insertSuggestion / getSuggestions live on the wrapper class.
+        try {
+            const { SuggestionStore } = require('./services/SuggestionStore');
+            this.suggestionStore = new SuggestionStore(DatabaseManager.getInstance());
+            console.log('[AppState] SuggestionStore initialized');
+        } catch (e) {
+            console.error('[AppState] Failed to initialize SuggestionStore:', e);
+        }
 
         // Initialize Meeting Copilot Knowledge Base Manager
         try {
@@ -2846,39 +2929,51 @@ export class AppState {
         }
       }
 
-      // Live KB-grounded suggestion on interviewer finals: pull last 60s of
-      // transcript as context, hand the latest question to `kb:suggest` (which
-      // queries the active client case's KB + broadcasts `suggestion-generated`
-      // to all renderer windows). No-op when no active case is set, when the
-      // rate-limit gate skips, or when the question hasn't changed since the
-      // last fire. Manual triggers (Sparkles button, ••• More menu) still call
-      // `kb:suggest` through their own paths.
-      if (segment.isFinal && speaker === 'interviewer' && this.isMeetingActive) {
-        const q = (segment.text || '').trim();
-        if (q.length >= 8) {
-          const now = Date.now();
-          const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-          if (now - _lastLiveSuggestAt < LIVE_SUGGEST_COOLDOWN_MS) return;
-          if (norm(q) === norm(_lastLiveSuggestQ)) return;
-          _lastLiveSuggestAt = now;
-          _lastLiveSuggestQ = q;
-          try {
-            const { runKbSuggest } = require('./rag/kbSuggest');
-            const ctxItems = (this.intelligenceManager as any)?.getContext?.(60) || [];
-            const transcriptContext = ctxItems
-              .map((i: any) => (i && typeof i.text === 'string') ? `${i.role || 'speaker'}: ${i.text}` : '')
-              .filter(Boolean)
-              .join('\n')
-              .slice(0, 1500);
-            runKbSuggest({ question: q, transcriptContext }, this)
-              .then((result: any) => {
-                if (!result?.success && result?.error !== 'no_active_client_case') {
-                  console.warn('[live-suggestion] kb:suggest failed:', result?.error);
-                }
-              })
-              .catch((err: any) => console.warn('[live-suggestion] auto-trigger failed:', err?.message || err));
-          } catch (err: any) {
-            console.warn('[live-suggestion] require/runKbSuggest failed:', err?.message || err);
+      // Live KB-grounded suggestion on interviewer finals: hand the latest
+      // utterance to the SuggestionPipeline, which streams tokens back to the
+      // renderer via the `suggestion:progressive` IPC channel. Replaces the
+      // older non-streaming runKbSuggest path — same event-driven trigger,
+      // but the renderer now sees tokens as they arrive (TTFT ~300-500ms)
+      // instead of a single block after the full generation completes.
+      // No-op when no active case is set, when the rate-limit gate skips,
+      // or when the question hasn't changed since the last fire. Manual
+      // triggers (Sparkles button, ••• More menu) still call `kb:suggest`
+      // through their own paths (legacy non-streaming shim).
+      if (segment.isFinal && this.isMeetingActive) {
+        // Always fire the SuggestionPipeline on every STT-final regardless
+        // of chat mode. In Suggest mode the renderer's coordinator renders
+        // each streamed event as a visible bubble. In Manual mode the
+        // coordinator stashes only the most recent `done` event in a hidden
+        // "pending" slot, so when the user clicks the Sparkles button the
+        // latest ambient suggestion is revealed — about the most recent
+        // topic they paused on — without any typing. The pipeline's
+        // internal cooldown + duplicate-question suppression keep this from
+        // being wasteful (one LLM call per meaningful turn, ~5s cadence).
+        {
+          // Fire SuggestionPipeline on BOTH interviewer (system audio) and
+          // user (mic) finals. In a real meeting, interviewer is the client
+          // / other person and is what we want to react to; but in solo-
+          // testing the user is the only speaker. Either way the copilot
+          // should react.
+          const q = (segment.text || '').trim();
+          if (q.length >= 8 && (speaker === 'interviewer' || speaker === 'user')) {
+            try {
+              const { getSuggestionPipeline } = require('./rag/suggest/SuggestionPipeline');
+              const ctxItems = (this.intelligenceManager as any)?.getContext?.(60) || [];
+              const transcriptContext = ctxItems
+                .map((i: any) => (i && typeof i.text === 'string') ? `${i.role || 'speaker'}: ${i.text}` : '')
+                .filter(Boolean)
+                .join('\n')
+                .slice(0, 1500);
+              // Note: cooldown + duplicate-question suppression moved inside the
+              // pipeline so it composes correctly with revision-based cancel.
+              getSuggestionPipeline().onTranscriptFinal(
+                { question: q, transcriptContext, speaker: speaker as 'interviewer' | 'user' },
+                this,
+              );
+            } catch (err: any) {
+              console.warn('[live-suggestion] SuggestionPipeline failed:', err?.message || err);
+            }
           }
         }
       }
@@ -5103,6 +5198,26 @@ export class AppState {
 
     const meetingGeneration = ++this._meetingGeneration;
     this.isMeetingActive = true;
+    // Phase D / Bug D: allocate a real meeting UUID that the SuggestionPipeline
+    // uses for persistence. Replaces the hardcoded 'live-meeting-current' which
+    // was being deleted (with all FK-cascaded meeting_suggestions rows) at
+    // meeting-end in RAGManager.deleteMeetingData(). We persist this id across
+    // the meeting lifetime and broadcast it via meeting-state-changed so the
+    // renderer can use it for suggestionSave IPC calls.
+    this._currentMeetingId = `meeting_${crypto.randomUUID()}`;
+    // Phase P fix: pre-create a placeholder row in `meetings` so the FK from
+    // `meeting_suggestions` (which the SuggestionPipeline writes during the
+    // meeting) has a valid target. Without this, every live suggestion save
+    // fails with FOREIGN KEY constraint failed (SQLITE_CONSTRAINT_FOREIGNKEY)
+    // and `insertSuggestion` silently logs a warning — the user sees an empty
+    // Suggestions tab after the meeting. The final row is written at stop
+    // time by `saveMeeting` (UPSERT), which updates this placeholder in
+    // place WITHOUT triggering the FK cascade on child rows.
+    try {
+      DatabaseManager.getInstance().createLiveMeetingRow(this._currentMeetingId, Date.now());
+    } catch (e) {
+      console.warn('[AppState] createLiveMeetingRow failed:', (e as any)?.message);
+    }
     this.broadcastMeetingState()
     if (metadata) {
       this.intelligenceManager.setMeetingMetadata(metadata);
@@ -5325,11 +5440,6 @@ export class AppState {
     this._endMeetingInFlight = true;
     console.log('[Main] Ending Meeting...');
 
-    // Reset the live-suggestion rate limit so the next meeting can fire
-    // immediately, regardless of how recently the previous meeting fired.
-    _lastLiveSuggestAt = 0;
-    _lastLiveSuggestQ = '';
-
     // Phase 6 — meeting_stop telemetry. Emit BEFORE any teardown so a crash
     // in stop logic still records the stop event.
     try {
@@ -5518,7 +5628,19 @@ export class AppState {
 
         // 3. Snapshot transcript + persist placeholder + queue title/summary LLM.
         //    intelligenceManager.stopMeeting itself runs LLM in background.
-        const meetingId = await this.intelligenceManager.stopMeeting();
+        //    Pass the live meeting UUID allocated at startMeeting() so the saved
+        //    meeting row's primary key matches the id the renderer has been
+        //    using to persist meeting_suggestions rows throughout the meeting.
+        const liveId = this._currentMeetingId ?? undefined;
+        const meetingId = await this.intelligenceManager.stopMeeting(liveId);
+        // Bug-fix: clear the cached id AFTER persistence so the next meeting
+        // allocates a fresh one and the IPC `meeting:get-current-id` does not
+        // leak the prior meeting's id to a renderer that asks mid-teardown.
+        this._currentMeetingId = null;
+        // Re-broadcast so any listener that hasn't been told yet clears its
+        // cached id (the synchronous broadcast at the top of endMeeting ran
+        // before the reset, so the payload still carried the prior id).
+        this.broadcastMeetingState();
 
         // 5. RAG cleanup — same logic as before, just inside the BG IIFE.
         if (meetingId) {
@@ -5969,15 +6091,49 @@ export class AppState {
       this.screenshotHelper.getExtraScreenshotQueue().length
     )
 
+    // Cmd+B has a single, predictable behavior: bring Natively to the front.
+    // We do NOT collapse the overlay on subsequent presses — the user expects
+    // "show me the app" semantics, not "toggle the panel state." If the user
+    // is in overlay mode (meeting active) the overlay stays visible at full
+    // size; if in launcher mode, the launcher window gets focus.
+    //
+    // The previous behavior sent 'toggle-expand' IPC in overlay mode, which
+    // collapsed the panel on first press and expanded on second — the user
+    // saw the panel "get smaller" and assumed something was broken. This
+    // version is a strict show-and-focus.
+
     const mode = this.windowHelper.getCurrentWindowMode();
 
     if (mode === 'launcher') {
-      // In launcher mode, just physically hide/show the window
-      this.windowHelper.toggleMainWindow();
+      // Launcher mode: if hidden, show it; if visible, just refocus (don't hide —
+      // hiding would be confusing given the user just asked for the window).
+      const mainWindow = this.windowHelper.getMainWindow?.();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (!mainWindow.isVisible()) {
+          this.windowHelper.showMainWindow();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+        if (process.platform === 'darwin' && typeof (mainWindow as any).restore === 'function') {
+          (mainWindow as any).restore();
+        }
+      }
     } else {
-      // In overlay mode, send toggle-expand IPC to expand/collapse the UI
-      const targetWindow = this.windowHelper.getOverlayWindow();
-      this.sendToWindow(targetWindow, 'toggle-expand');
+      // Overlay mode: make sure the overlay is visible AND bring it to the
+      // front. Do NOT collapse the panel — 'toggle-expand' was confusing.
+      const targetWindow = this.windowHelper.getOverlayWindow?.();
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        if (!targetWindow.isVisible()) {
+          targetWindow.show();
+        } else {
+          // Re-show to bring to front, then restore from minimized on macOS.
+          targetWindow.show();
+        }
+        targetWindow.focus();
+        if (process.platform === 'darwin' && typeof (targetWindow as any).restore === 'function') {
+          (targetWindow as any).restore();
+        }
+      }
     }
   }
 
@@ -6614,6 +6770,16 @@ export class AppState {
 
   public getOverlayMousePassthrough(): boolean {
     return this.overlayMousePassthrough;
+  }
+
+  // -- Phase UI: overlay bounds pass-through to WindowHelper --------------
+
+  public getOverlayBounds(): { x: number; y: number; width: number; height: number } | null {
+    return this.windowHelper.getOverlayBounds();
+  }
+
+  public setOverlayBounds(bounds: { x: number; y: number; width: number; height: number }, opts?: { snap?: boolean; snapThreshold?: number }): { x: number; y: number; width: number; height: number } {
+    return this.windowHelper.setOverlayBounds(bounds, opts);
   }
 
   public getVerboseLogging(): boolean {

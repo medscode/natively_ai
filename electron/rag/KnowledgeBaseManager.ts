@@ -265,9 +265,11 @@ export class KnowledgeBaseManager {
             return { chunks: [], formattedContext: '' };
         }
         const limit = opts?.limit || 5;
-        // Lowered threshold to 0.0 — for the demo, surface any chunk from the
-        // active case so the user sees real answers instead of an empty KB.
-        const minSimilarity = opts?.minSimilarity ?? 0.0;
+        // Floor at 0.35 to suppress noise. Phase 2-lite fix — was 0.0 which
+        // let irrelevant chunks through and produced garbage during streaming.
+        // Override with opts.minSimilarity for callers that need looser recall.
+        // Tune in Phase 5 with the eval suite.
+        const minSimilarity = opts?.minSimilarity ?? 0.35;
         try {
             const embeddingResult = await this.embeddingPipeline.getEmbeddingWithFallback(query);
             const embedding = embeddingResult?.embedding;

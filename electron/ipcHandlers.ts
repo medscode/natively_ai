@@ -4008,6 +4008,70 @@ export function initializeIpcHandlers(appState: AppState): void {
     return { success: true, enabled };
   });
 
+  // Phase UI: compact overlay bounds — used by OverlayResizeHandles.
+  safeHandle('overlay:get-bounds', async () => {
+    return appState.getOverlayBounds();
+  });
+
+  safeHandle('overlay:set-bounds', async (_event, bounds: { x: number; y: number; width: number; height: number }, opts?: { snap?: boolean; snapThreshold?: number }) => {
+    const result = appState.setOverlayBounds(bounds, opts);
+    // Persist to settings so next overlay open restores the position.
+    try {
+      appState.getSettingsManager()?.set('overlayBounds', result);
+    } catch (e: any) {
+      console.warn('[ipcHandlers] failed to persist overlayBounds:', e?.message);
+    }
+    return result;
+  });
+
+  // Phase P: persistent suggestion history. Called by the renderer on every
+  // "done" event so the chat-bubble history survives meeting end / restart.
+  safeHandle('suggestion:save', async (_event, payload: {
+    meetingId: string;
+    item: { suggestionId: string; text: string; citations?: unknown[]; source: 'live' | 'mock' | 'manual'; firedAt: number; question?: string };
+  }) => {
+    try {
+      appState.getSuggestionStore().saveLiveSuggestion(payload.meetingId, payload.item);
+    } catch (e: any) {
+      console.warn('[ipcHandlers] suggestion:save failed:', e?.message);
+    }
+    return { success: true };
+  });
+
+  safeHandle('chat:get-suggestions', async (_event, meetingId: string) => {
+    try {
+      return appState.getSuggestionStore().getSuggestionsForMeeting(meetingId);
+    } catch (e: any) {
+      console.warn('[ipcHandlers] chat:get-suggestions failed:', e?.message);
+      return [];
+    }
+  });
+
+  // Phase D / Bug D: real meeting UUID lookup for SuggestionPipeline.
+  safeHandle('meeting:get-current-id', async () => {
+    return appState.getCurrentMeetingId();
+  });
+
+  // Sparkles button: route manual triggers through SuggestionPipeline so
+  // they use the same path as Suggest-mode auto-triggers. Replaces the
+  // legacy kb:suggest IPC which required an active KB case and failed
+  // with 'no_active_client_case' otherwise.
+  safeHandle('suggestion:run-once', async (_event, question: string) => {
+    try {
+      if (!question || !question.trim()) return { success: false, error: 'question is required' };
+      const pipeline = appState.getSuggestionPipeline?.();
+      if (!pipeline) return { success: false, error: 'pipeline not initialized' };
+      pipeline.onTranscriptFinal(
+        { question: question.trim(), speaker: 'user' },
+        appState,
+      );
+      return { success: true };
+    } catch (e: any) {
+      console.warn('[ipcHandlers] suggestion:run-once failed:', e?.message);
+      return { success: false, error: e?.message };
+    }
+  });
+
   safeHandle('get-overlay-mouse-passthrough', async () => {
     return appState.getOverlayMousePassthrough();
   });

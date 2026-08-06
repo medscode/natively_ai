@@ -1758,8 +1758,15 @@ ${lastQuestion}
 
 ANSWER DIRECTLY:`;
 
-    // Apply language instruction so this path honours the user's language setting
-    const systemPrompt = this.injectLanguageInstruction(basePrompt);
+    // Force English output for suggestions regardless of the user's language
+    // setting. The user-facing chat reply can match the user's language, but
+    // the in-meeting suggestion pill is a UI element and must always be in
+    // English (consistent UX, easier to scan mid-meeting). We bypass
+    // injectLanguageInstruction() to skip the auto-detect-Hindi behavior.
+    const systemPrompt = `${basePrompt}\n\n[LANGUAGE OVERRIDE — SUGGESTION PILL]
+Respond in English only. The suggestion card is a UI element shown above the meeting transcript — it must always be in English for clarity, regardless of what language the user is speaking.
+Do NOT switch to Hindi, Spanish, or any other language even if the user speaks in that language.
+[END LANGUAGE OVERRIDE]`;
 
     try {
       if (this.isCodexAvailable()) {

@@ -315,6 +315,9 @@ interface ElectronAPI {
   ) => () => void;
   onSuggestionProcessingStart: (callback: () => void) => () => void;
   onSuggestionError: (callback: (error: { error: string }) => void) => () => void;
+  onSuggestionProgressive: (
+    callback: (event: import('./rag/suggest/SuggestionPipeline').SuggestionProgressiveEvent) => void,
+  ) => () => void;
   generateSuggestion: (context: string, lastQuestion: string) => Promise<{ suggestion: string }>;
   getInputDevices: () => Promise<Array<{ id: string; name: string }>>;
   getOutputDevices: () => Promise<Array<{ id: string; name: string }>>;
@@ -588,7 +591,7 @@ interface ElectronAPI {
   showOverlay: () => Promise<void>;
   hideOverlay: () => Promise<void>;
   getMeetingActive: () => Promise<boolean>;
-  onMeetingStateChanged: (callback: (data: { isActive: boolean }) => void) => () => void;
+  onMeetingStateChanged: (callback: (data: { isActive: boolean; meetingId: string | null }) => void) => () => void;
   onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void;
   onEnsureExpanded: (callback: () => void) => () => void;
   onToggleExpand: (callback: () => void) => () => void;
@@ -599,6 +602,12 @@ interface ElectronAPI {
   toggleOverlayMousePassthrough: () => Promise<{ success: boolean; enabled: boolean }>;
   getOverlayMousePassthrough: () => Promise<boolean>;
   onOverlayMousePassthroughChanged: (callback: (enabled: boolean) => void) => () => void;
+  // Phase UI: compact overlay bounds — used by OverlayResizeHandles.
+  overlayGetBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>;
+  overlaySetBounds: (
+    bounds: { x: number; y: number; width: number; height: number },
+    opts?: { snap?: boolean; snapThreshold?: number },
+  ) => Promise<{ x: number; y: number; width: number; height: number }>;
 
   // Streaming listeners
   streamGeminiChat: (
@@ -1163,8 +1172,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showOverlay: () => ipcRenderer.invoke('show-overlay'),
   hideOverlay: () => ipcRenderer.invoke('hide-overlay'),
   getMeetingActive: () => ipcRenderer.invoke('get-meeting-active'),
-  onMeetingStateChanged: (callback: (data: { isActive: boolean }) => void) => {
-    const subscription = (_: any, data: { isActive: boolean }) => callback(data);
+  onMeetingStateChanged: (callback: (data: { isActive: boolean; meetingId: string | null }) => void) => {
+    const subscription = (_: any, data: { isActive: boolean; meetingId: string | null }) => callback(data);
     ipcRenderer.on('meeting-state-changed', subscription);
     return () => {
       ipcRenderer.removeListener('meeting-state-changed', subscription);
@@ -1203,6 +1212,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-overlay-mouse-passthrough', enabled),
   toggleOverlayMousePassthrough: () => ipcRenderer.invoke('toggle-overlay-mouse-passthrough'),
   getOverlayMousePassthrough: () => ipcRenderer.invoke('get-overlay-mouse-passthrough'),
+  overlayGetBounds: () => ipcRenderer.invoke('overlay:get-bounds'),
+  overlaySetBounds: (
+    bounds: { x: number; y: number; width: number; height: number },
+    opts?: { snap?: boolean; snapThreshold?: number },
+  ) => ipcRenderer.invoke('overlay:set-bounds', bounds, opts),
+  // Phase P: persistent suggestion history.
+  suggestionSave: (payload: {
+    meetingId: string;
+    item: {
+      suggestionId: string;
+      text: string;
+      citations?: unknown[];
+      source: 'live' | 'mock' | 'manual';
+      firedAt: number;
+      question?: string;
+    };
+  }) => ipcRenderer.invoke('suggestion:save', payload),
+  chatGetSuggestions: (meetingId: string) => ipcRenderer.invoke('chat:get-suggestions', meetingId),
+  // Sparkles button: route through SuggestionPipeline so manual triggers use
+  // the same path as Suggest-mode auto-triggers.
+  suggestionRunOnce: (question: string) => ipcRenderer.invoke('suggestion:run-once', question),
+  // Phase D / Bug D: real meeting UUID. Allocated by main on startMeeting.
+  getCurrentMeetingId: () => ipcRenderer.invoke('meeting:get-current-id'),
   setOpenAtLogin: (open: boolean) => ipcRenderer.invoke('set-open-at-login', open),
   getOpenAtLogin: () => ipcRenderer.invoke('get-open-at-login'),
   setDisguise: (mode: 'terminal' | 'settings' | 'activity' | 'none') =>
@@ -1536,6 +1568,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('generate-suggestion', context, lastQuestion),
   kbSuggest: (params: { question: string; transcriptContext?: string }) =>
     ipcRenderer.invoke('kb:suggest', params),
+  // Phase 2-lite: progressive suggestion events streamed from main process
+  // SuggestionPipeline (event-driven, revision-guarded). Replaces the
+  // 5s polling path that used onSuggestionGenerated/onSuggestionError.
+  onSuggestionProgressive: (callback: (event: import('./rag/suggest/SuggestionPipeline').SuggestionProgressiveEvent) => void) => {
+    const subscription = (_: any, data: any) => callback(data);
+    ipcRenderer.on('suggestion:progressive', subscription);
+    return () => {
+      ipcRenderer.removeListener('suggestion:progressive', subscription);
+    };
+  },
 
   // Meeting Copilot chat toggles
   chatSetMode: (mode: 'manual' | 'suggest') => ipcRenderer.invoke('chat:set-mode', mode),

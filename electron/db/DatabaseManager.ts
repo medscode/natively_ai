@@ -1412,6 +1412,31 @@ export class DatabaseManager {
             this.db.pragma('user_version = 26');
         }
 
+        // v27 — Persistent suggestion history. Stores each "done" event from the
+        // SuggestionPipeline so the chat-bubble history survives meeting end,
+        // app restart, and page refresh. Idempotent via UNIQUE(meeting_id, suggestion_id).
+        if (version < 27) {
+            this.db.exec(`
+                CREATE TABLE IF NOT EXISTS meeting_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    meeting_id TEXT NOT NULL,
+                    suggestion_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    citations_json TEXT,
+                    source TEXT NOT NULL,
+                    fired_at INTEGER NOT NULL,
+                    question TEXT,
+                    UNIQUE(meeting_id, suggestion_id),
+                    FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_meeting_suggestions_meeting
+                    ON meeting_suggestions(meeting_id);
+                CREATE INDEX IF NOT EXISTS idx_meeting_suggestions_fired_at
+                    ON meeting_suggestions(fired_at);
+            `);
+            this.db.pragma('user_version = 27');
+        }
+
         console.log('[DatabaseManager] Migrations completed.');
 
         // SELF-HEAL: Older DBs may have a `knowledge_sources` table created by the
@@ -2388,8 +2413,17 @@ export class DatabaseManager {
         }
 
         const insertMeeting = this.db.prepare(`
-            INSERT OR REPLACE INTO meetings (id, title, start_time, duration_ms, summary_json, created_at, calendar_event_id, source, is_processed, summary_status)
+            INSERT INTO meetings (id, title, start_time, duration_ms, summary_json, created_at, calendar_event_id, source, is_processed, summary_status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                start_time = excluded.start_time,
+                duration_ms = excluded.duration_ms,
+                summary_json = excluded.summary_json,
+                calendar_event_id = excluded.calendar_event_id,
+                source = excluded.source,
+                is_processed = excluded.is_processed,
+                summary_status = excluded.summary_status
         `);
 
         const insertTranscript = this.db.prepare(`
@@ -2738,6 +2772,110 @@ export class DatabaseManager {
         } catch (error) {
             console.error(`[DatabaseManager] Failed to delete meeting ${id}:`, error);
             return false;
+        }
+    }
+
+    // -- Phase P: persistent suggestion history ---------------------------------
+
+    /**
+     * Create a bare-bones placeholder row in `meetings` for the live meeting
+     * so that foreign-keyed child rows (notably `meeting_suggestions` written
+     * by the live SuggestionPipeline) have a valid FK target during the
+     * meeting — well BEFORE `stopMeeting` calls `saveMeeting` to write the
+     * final placeholder → final-row. Idempotent via `INSERT OR IGNORE` so a
+     * re-entry into the live path doesn't throw a UNIQUE/PK conflict.
+     *
+     * The final meeting row is written by `saveMeeting` (UPSERT) at stop
+     * time, which updates this placeholder in place. Because UPSERT (unlike
+     * `INSERT OR REPLACE`) does not delete-then-insert, the FK cascade does
+     * NOT wipe child rows — suggestions survive.
+     */
+    public createLiveMeetingRow(meetingId: string, startTimeMs: number, source: string = 'live'): void {
+        if (!this.db) return;
+        try {
+            const stmt = this.db.prepare(`
+                INSERT OR IGNORE INTO meetings
+                    (id, title, start_time, duration_ms, summary_json, created_at, source, is_processed, summary_status)
+                VALUES (?, ?, ?, 0, '{}', ?, ?, 0, 'live')
+            `);
+            stmt.run(
+                meetingId,
+                'In progress…',
+                startTimeMs,
+                new Date(startTimeMs).toISOString(),
+                source,
+            );
+        } catch (e: any) {
+            console.warn(`[DatabaseManager] createLiveMeetingRow failed:`, e?.message);
+        }
+    }
+
+    /**
+     * Insert a suggestion into meeting_suggestions. Idempotent: if a row with
+     * the same (meeting_id, suggestion_id) already exists, this is a no-op.
+     * Safe to call from the SuggestionPipeline hot path on every "done" event.
+     */
+    public insertSuggestion(meetingId: string, item: {
+        suggestionId: string;
+        text: string;
+        citations?: unknown[];
+        source: 'live' | 'mock' | 'manual';
+        firedAt: number;
+        question?: string;
+    }): void {
+        if (!this.db) return;
+        try {
+            const stmt = this.db.prepare(`
+                INSERT OR IGNORE INTO meeting_suggestions
+                    (meeting_id, suggestion_id, text, citations_json, source, fired_at, question)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `);
+            stmt.run(
+                meetingId,
+                item.suggestionId,
+                item.text,
+                item.citations ? JSON.stringify(item.citations) : null,
+                item.source,
+                item.firedAt,
+                item.question ?? null,
+            );
+        } catch (e: any) {
+            console.warn(`[DatabaseManager] insertSuggestion failed:`, e?.message);
+        }
+    }
+
+    /**
+     * Read all persisted suggestions for a meeting, ordered by fired_at ASC.
+     * Used by the renderer to replay the chat-bubble history on mount.
+     */
+    public getSuggestions(meetingId: string): Array<{
+        suggestionId: string;
+        text: string;
+        citations: any[];
+        source: 'live' | 'mock' | 'manual';
+        firedAt: number;
+        question?: string;
+    }> {
+        if (!this.db) return [];
+        try {
+            const stmt = this.db.prepare(`
+                SELECT suggestion_id, text, citations_json, source, fired_at, question
+                FROM meeting_suggestions
+                WHERE meeting_id = ?
+                ORDER BY fired_at ASC
+            `);
+            const rows = stmt.all(meetingId) as any[];
+            return rows.map((r) => ({
+                suggestionId: r.suggestion_id,
+                text: r.text,
+                citations: r.citations_json ? JSON.parse(r.citations_json) : [],
+                source: r.source,
+                firedAt: r.fired_at,
+                question: r.question ?? undefined,
+            }));
+        } catch (e: any) {
+            console.warn(`[DatabaseManager] getSuggestions failed:`, e?.message);
+            return [];
         }
     }
 

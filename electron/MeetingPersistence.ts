@@ -30,8 +30,8 @@ export class MeetingPersistence {
      * Stops the meeting immediately, snapshots data, and triggers background processing.
      * Returns immediately so UI can switch.
      */
-    public async stopMeeting(): Promise<string | null> {
-        console.log('[MeetingPersistence] Stopping meeting and queueing save...');
+    public async stopMeeting(existingMeetingId?: string): Promise<string | null> {
+        console.log(`[MeetingPersistence] Stopping meeting and queueing save... (existingMeetingId=${existingMeetingId || 'new'})`);
 
         // 0. Force-save any pending interim transcript
         this.session.flushInterimTranscript();
@@ -103,7 +103,12 @@ export class MeetingPersistence {
         // 2. Reset state immediately so new meeting can start or UI is clean
         this.session.reset();
 
-        const meetingId = crypto.randomUUID();
+        // Phase D / Bug-fix: reuse the id already allocated by startMeeting()
+        // when one is provided, so that the meeting row's primary key matches
+        // the id used for any per-meeting persistence (notably meeting_suggestions
+        // rows written live by SuggestionPipeline). Generating a fresh uuid here
+        // would strand those rows under an orphan id that no UI ever queries.
+        const meetingId = existingMeetingId || crypto.randomUUID();
 
         // 4. Initial Save (Placeholder)
         const minutes = Math.floor(durationMs / 60000);

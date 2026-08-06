@@ -503,11 +503,11 @@ export class WindowHelper {
 
     const overlaySettings: Electron.BrowserWindowConstructorOptions = {
       width: WindowHelper.OVERLAY_DEFAULT_WIDTH,
-      height: 1,
+      height: 480, // Compact default — renderer manages via overlay:set-bounds
       x: overlayDefaultX,
       y: overlayDefaultY,
-      minWidth: 300,
-      minHeight: 1,
+      minWidth: 320,
+      minHeight: 240,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -520,7 +520,7 @@ export class WindowHelper {
       backgroundColor: '#00000000',
       alwaysOnTop: true,
       focusable: true,
-      resizable: false, // Enforce automatic resizing only
+      resizable: true, // Allow user-driven resize via renderer drag handles
       movable: true,
       skipTaskbar: true, // Don't show separately in dock/taskbar
       hasShadow: false, // Prevent shadow from adding perceived size/artifacts
@@ -1280,23 +1280,12 @@ export class WindowHelper {
    * room to render. Saves the previous bounds so we can restore on close.
    */
   public expandOverlayToFullScreen(): void {
-    const win = this.overlayWindow;
-    if (!win || win.isDestroyed()) return;
-    if (!this.overlayBounds) {
-      try {
-        this.overlayBounds = win.getBounds();
-      } catch {
-        this.overlayBounds = null;
-      }
-    }
-    try {
-      const display = screen.getDisplayMatching(win.getBounds());
-      const work = display.workArea;
-      win.setBounds({ x: work.x, y: work.y, width: work.width, height: work.height });
-      win.setOpacity(0.85); // slight transparency so the meeting app underneath is visible
-    } catch (e: any) {
-      console.warn('[WindowHelper] expandOverlayToFullScreen failed:', e?.message);
-    }
+    // Phase UI.4 — No-op. The overlay stays at its current bounds; the user
+    // resizes it via the resize handles in OverlayResizeHandles.tsx. Auto-
+    // expansion to full screen was confusing (panel blew up the moment chat
+    // opened). The chat panel now renders as a child of the overlay at its
+    // own size, not as an overlay-fill.
+    return;
   }
 
   /**
@@ -1324,5 +1313,96 @@ export class WindowHelper {
     // On Windows/Linux the 'close' event listener intercepts this
     // and hides to tray unless the app is actually quitting.
     win.close();
+  }
+
+  // -- Phase UI: compact overlay resize + edge snap -----------------------
+
+  /**
+   * Apply explicit bounds to the overlay window. Renderer calls this on drag
+   * resize end (and during drag for live preview). Bounds are clamped to
+   * the work area of the display the overlay currently sits on. If the
+   * caller passes `snap: true`, edges within `snapThreshold` of the screen
+   * are snapped to the screen edge (the standard "drag-to-edge" UX).
+   */
+  public setOverlayBounds(bounds: { x: number; y: number; width: number; height: number }, opts?: { snap?: boolean; snapThreshold?: number }): { x: number; y: number; width: number; height: number } {
+    const win = this.overlayWindow;
+    if (!win || win.isDestroyed()) return bounds;
+    const safe = this.clampBoundsToWorkArea(bounds);
+    let finalBounds = safe;
+    if (opts?.snap) {
+      finalBounds = this.snapOverlayToEdges(safe, opts.snapThreshold ?? 30);
+    }
+    try {
+      win.setBounds(finalBounds);
+    } catch (e: any) {
+      console.warn('[WindowHelper] setOverlayBounds failed:', e?.message);
+      return bounds;
+    }
+    // Persist as last-known-good bounds (so switchToOverlay can restore).
+    this.overlayBounds = win.getBounds();
+    return this.overlayBounds;
+  }
+
+  public getOverlayBounds(): { x: number; y: number; width: number; height: number } | null {
+    const win = this.overlayWindow;
+    if (!win || win.isDestroyed()) return null;
+    try {
+      return win.getBounds();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Apply saved bounds before the overlay window is shown. Called from
+   * AppState right after WindowHelper is constructed so switchToOverlay()
+   * picks them up via the existing this.overlayBounds branch.
+   */
+  public applyInitialOverlayBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+    this.overlayBounds = { ...bounds };
+  }
+
+  /**
+   * Pure function: snap bounds to nearest screen edge if within threshold.
+   * Returns the (possibly snapped) bounds without applying them.
+   */
+  public snapOverlayToEdges(bounds: { x: number; y: number; width: number; height: number }, threshold: number = 30): { x: number; y: number; width: number; height: number } {
+    try {
+      const display = screen.getDisplayMatching(bounds);
+      const work = display.workArea;
+      let { x, y, width, height } = bounds;
+      // Snap left edge.
+      if (Math.abs(x - work.x) <= threshold) x = work.x;
+      // Snap right edge.
+      if (Math.abs((x + width) - (work.x + work.width)) <= threshold) x = work.x + work.width - width;
+      // Snap top edge.
+      if (Math.abs(y - work.y) <= threshold) y = work.y;
+      // Snap bottom edge.
+      if (Math.abs((y + height) - (work.y + work.height)) <= threshold) y = work.y + work.height - height;
+      return { x, y, width, height };
+    } catch {
+      return bounds;
+    }
+  }
+
+  /**
+   * Clamp bounds to fit inside the work area of the display the overlay is on.
+   * Also enforces min size from constructor.
+   */
+  private clampBoundsToWorkArea(bounds: { x: number; y: number; width: number; height: number }): { x: number; y: number; width: number; height: number } {
+    try {
+      const display = screen.getDisplayMatching(bounds);
+      const work = display.workArea;
+      const minW = 320;
+      const minH = 240;
+      let { x, y, width, height } = bounds;
+      width = Math.max(minW, Math.min(width, work.width));
+      height = Math.max(minH, Math.min(height, work.height));
+      x = Math.max(work.x, Math.min(x, work.x + work.width - width));
+      y = Math.max(work.y, Math.min(y, work.y + work.height - height));
+      return { x, y, width, height };
+    } catch {
+      return bounds;
+    }
   }
 }

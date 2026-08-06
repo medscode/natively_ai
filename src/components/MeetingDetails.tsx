@@ -8,6 +8,7 @@ import { mapLanguageForPrism, isBlockCode } from '../utils/prismLanguage';
 import { registerPrismLanguages } from '../utils/registerPrismLanguages';
 import MeetingChatOverlay from './MeetingChatOverlay';
 import EditableTextBlock from './EditableTextBlock';
+import MeetingSuggestions from './MeetingSuggestions';
 import NativelyLogo from './icon.png';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -861,7 +862,7 @@ const MeetingDetails: React.FC<MeetingDetailsProps> = ({ meeting: initialMeeting
     const isLight = useResolvedTheme() === 'light';
     // We need local state for the meeting object to reflect optimistic updates
     const [meeting, setMeeting] = useState<Meeting>(initialMeeting);
-    const [activeTab, setActiveTab] = useState<'summary' | 'transcript' | 'usage'>('summary');
+    const [activeTab, setActiveTab] = useState<'summary' | 'transcript' | 'usage' | 'suggestions'>('summary');
     const [query, setQuery] = useState('');
     const [isCopied, setIsCopied] = useState(false);
     const [isChatOpen, setIsChatOpen] = useState(false);
@@ -1179,7 +1180,7 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                     {/* Designing Tabs to match reference 1:1 (Dark Pill Container) */}
                     <div className="flex items-center justify-between mb-8">
                         <div className={`p-1 rounded-xl inline-flex items-center gap-0.5 ${isLight ? 'bg-[#E5E5EA] border border-black/[0.04]' : 'bg-[#121214] border border-white/[0.08]'}`}>
-                            {['summary', 'transcript', 'usage'].map((tab) => (
+                            {['summary', 'transcript', 'usage', 'suggestions'].map((tab) => (
                                 <button
                                     key={tab}
                                     onClick={() => setActiveTab(tab as any)}
@@ -1196,7 +1197,7 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                                             transition={{ type: "spring", stiffness: 400, damping: 30 }}
                                         />
                                     )}
-                                    {tab === 'summary' ? t('Summary') : tab === 'transcript' ? t('Transcript') : t('Usage')}
+                                    {tab === 'summary' ? t('Summary') : tab === 'transcript' ? t('Transcript') : tab === 'usage' ? t('Usage') : t('Suggestions')}
                                 </button>
                             ))}
                         </div>
@@ -1207,7 +1208,7 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                             className="flex items-center gap-2 text-xs font-medium text-text-secondary hover:text-text-primary transition-colors"
                         >
                             {isCopied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                            {isCopied ? t('Copied') : activeTab === 'summary' ? t('Copy full summary') : activeTab === 'transcript' ? t('Copy full transcript') : t('Copy usage')}
+                            {isCopied ? t('Copied') : activeTab === 'summary' ? t('Copy full summary') : activeTab === 'transcript' ? t('Copy full transcript') : activeTab === 'usage' ? t('Copy usage') : t('Copy suggestions')}
                         </button>
                     </div>
 
@@ -1942,6 +1943,12 @@ ${meeting.detailedSummary.keyPoints?.map(item => `- ${item}`).join('\n') || 'Non
                                     });
                                 })()}
                                 {!meeting.usage?.length && <p className="text-text-tertiary">{t('No usage history.')}</p>}
+                            </section>
+                        )}
+
+                        {activeTab === 'suggestions' && (
+                            <section className="space-y-3 pb-10">
+                                <MeetingSuggestions meetingId={meeting.id} />
                             </section>
                         )}
                     </div>

@@ -176,6 +176,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import MeetingChatPanel from './MeetingChatPanel';
+import { OverlayResizeHandles } from './OverlayResizeHandles';
 import { useResolvedTheme } from '../hooks/useResolvedTheme';
 import { genMessageId } from '../utils/messageId';
 import { mapLanguageForPrism, isBlockCode } from '../utils/prismLanguage';
@@ -6602,6 +6603,11 @@ Provide only the answer, nothing else.`;
               )}
 
             </motion.div>
+
+            {/* Phase UI: compact overlay resize handles — 8 always-visible
+                affordances on the outer edges of the shell. Wire to OS-level
+                window resize via electronAPI.overlaySetBounds. */}
+            <OverlayResizeHandles />
           </motion.div>
       {/* end always-mounted shell */}
     </div>
@@ -6629,6 +6635,22 @@ Provide only the answer, nothing else.`;
         <Sparkles size={12} />
         <span>Copilot</span>
     </button>
+
+    {/* Mouse-passthrough indicator — visible ONLY when overlay is in
+        passthrough mode. Shows the user that clicks are passing through to
+        apps behind the overlay (Chrome, Zoom, Meet). Positioned top-right
+        next to the Copilot button so it's hard to miss. Includes the shortcut
+        hint so the user knows how to toggle back. */}
+    {isMousePassthrough && (
+      <div
+        className="fixed top-3 right-32 z-50 flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-amber-500/50 bg-amber-500/15 text-amber-300 text-[11px] font-medium backdrop-blur-sm animate-pulse"
+        style={{ pointerEvents: 'auto' }}
+        title="Mouse passthrough is ON — clicks pass through to apps behind the overlay. Press Cmd+Shift+B to take control back."
+      >
+        <PointerOff size={12} />
+        <span>Passthrough ON · Cmd+Shift+B</span>
+      </div>
+    )}
     </>
   );
 };
