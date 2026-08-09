@@ -34,7 +34,8 @@ export type ModeTemplateType =
     | 'recruiting'
     | 'team-meet'
     | 'lecture'
-    | 'technical-interview';
+    | 'technical-interview'
+    | 'lawyer';
 
 /** The slice of the active mode the planner needs. Built by
  *  ModesManager.getActiveModeInfo() (cached) and threaded through
@@ -113,6 +114,12 @@ export const MODE_CONTEXT_PROFILES: Record<ModeTemplateType, ModeContextProfile>
         fallbackLiveAnswerType: 'general_meeting_answer',
         fallbackManualAnswerType: 'general_meeting_answer',
     },
+    // Lawyer: ambiguous live turns about wills/trusts/deeds land on the
+    // general meeting-answer floor — the mode-specific system prompt and
+    // KB chunks do the substantive work. Manual turns likewise stay
+    // general so unrelated chat questions don't get rerouted into
+    // legal-shaped answers.
+    'lawyer': NEUTRAL,
 };
 
 /** The two floor types the classification chain can fall through to. The mode

@@ -35,6 +35,12 @@ export interface SuggestionPipelineInput {
     speaker?: 'interviewer' | 'user' | 'assistant';
     /** Cooldown gate (ms). Suggestion is suppressed if last fire was within this window. */
     cooldownMs?: number;
+    /**
+     * Optional template type of the active mode. Used to tighten KB
+     * retrieval for modes that need precision over recall (e.g. Lawyer
+     * mode — top-2 chunks at 0.5 similarity instead of top-4 at 0.35).
+     */
+    templateType?: string;
 }
 
 export interface SuggestionProgressiveEvent {
@@ -166,10 +172,17 @@ export class SuggestionPipeline {
         }
 
         // Retrieval with a soft deadline.
+        // Lawyer mode: precision over recall. Top-2 chunks at 0.5 similarity
+        // instead of the default top-4 at 0.35 — keeps the LLM focused on the
+        // most relevant precedent/case-file chunk, avoids flooding the
+        // pointer set with peripheral facts that would distract the lawyer.
+        const retrievalOpts = input.templateType === 'lawyer'
+            ? { limit: 2, minSimilarity: 0.5 }
+            : { limit: 4, minSimilarity: 0.35 };
         const retrievalPromise = kb.queryKnowledgeBase(
             active.clientCaseId,
             input.question,
-            { limit: 4, minSimilarity: 0.35 },
+            retrievalOpts,
         );
         const retrievalResult = await Promise.race([
             retrievalPromise,

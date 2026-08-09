@@ -1232,7 +1232,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   chatGetSuggestions: (meetingId: string) => ipcRenderer.invoke('chat:get-suggestions', meetingId),
   // Sparkles button: route through SuggestionPipeline so manual triggers use
   // the same path as Suggest-mode auto-triggers.
-  suggestionRunOnce: (question: string) => ipcRenderer.invoke('suggestion:run-once', question),
+  suggestionRunOnce: (question: string, opts?: { clarify?: boolean }) =>
+    ipcRenderer.invoke('suggestion:run-once', question, opts),
   // Phase D / Bug D: real meeting UUID. Allocated by main on startMeeting.
   getCurrentMeetingId: () => ipcRenderer.invoke('meeting:get-current-id'),
   setOpenAtLogin: (open: boolean) => ipcRenderer.invoke('set-open-at-login', open),

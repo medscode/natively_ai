@@ -15,6 +15,7 @@ const MODE_PROMPTS = {
   'looking-for-work': prompts.MODE_LOOKING_FOR_WORK_PROMPT,
   'technical-interview': prompts.MODE_TECHNICAL_INTERVIEW_PROMPT,
   lecture: prompts.MODE_LECTURE_PROMPT,
+  lawyer: prompts.MODE_LAWYER_PROMPT,
 };
 
 const MODE_CONTRACT_TERMS = {
@@ -25,6 +26,8 @@ const MODE_CONTRACT_TERMS = {
   'looking-for-work': ['candidate', 'job interview', 'resume', 'STAR', 'salary'],
   'technical-interview': ['technical interview', 'coding', 'system design', 'dry-run', 'complexity', 'edge case'],
   lecture: ['student', 'lecture', 'study-partner', 'concept', 'homework', 'reading'],
+  // Lawyer: bullet-point advisor voice. Statute-grounded. KB slot-aware.
+  lawyer: ['domain advisor', 'bullet-point pointers', 'statute-grounded', 'Indian Succession Act', 'Indian Trusts Act', 'Registration Act', 'case_scenario', 'flowchart', 'statute_pin'],
 };
 
 const UNIQUE_MODE_TERMS = {

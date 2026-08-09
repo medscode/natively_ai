@@ -40,6 +40,7 @@ import {
     MODE_TEAM_MEET_PROMPT,
     MODE_LECTURE_PROMPT,
     MODE_TECHNICAL_INTERVIEW_PROMPT,
+    MODE_LAWYER_PROMPT,
     SHARED_MODE_PREFIX,
     SHARED_MODE_PREFIX_SHORT,
 } from '../llm/prompts';
@@ -58,7 +59,8 @@ export type ModeTemplateType =
     | 'recruiting'
     | 'team-meet'
     | 'lecture'
-    | 'technical-interview';
+    | 'technical-interview'
+    | 'lawyer';
 
 export interface Mode {
     id: string;
@@ -113,6 +115,7 @@ export const MODE_TEMPLATES: Array<{
     { type: 'looking-for-work',     label: 'Looking for work',     description: 'Answer interview questions with confidence and clarity.' },
     { type: 'technical-interview',  label: 'Technical Interview',  description: 'Whiteboard-style coding and system design support.' },
     { type: 'lecture',              label: 'Lecture',              description: 'Capture key concepts and content from lectures.' },
+    { type: 'lawyer',               label: 'Lawyer',               description: 'Wills, trusts, and deeds consulting — bullet-point pointers grounded in case files and statutes.' },
 ];
 
 // Default note sections seeded when a mode is created from a template
@@ -181,6 +184,15 @@ export const TEMPLATE_NOTE_SECTIONS: Record<ModeTemplateType, Array<{ title: str
         { title: 'Referral / follow-up', description: 'Referral requests, thank-you notes, materials to send, or networking follow-up.' },
         { title: 'Next steps', description: 'Concrete next steps, owners, dates, and preparation items.' },
     ],
+    lawyer: [
+        { title: 'Client and matter', description: 'Client name, matter type (will / trust / deed), jurisdiction, and any preliminary facts.' },
+        { title: 'Assets and parties', description: 'Property, beneficiaries, executors, trustees, witnesses, minors or dependents.' },
+        { title: 'Document status', description: 'Drafts, executed documents, prior wills, codicils, registered deeds, pending registrations.' },
+        { title: 'Statutes and authorities', description: 'Specific Act + Section relied on (Indian Succession Act 1925, Indian Trusts Act 1882, Registration Act 1908) and any case law cited.' },
+        { title: 'Legal pointers given', description: 'Bullet pointers the lawyer used during the meeting — kept terse, with statute anchors.' },
+        { title: 'Open issues / clarifications', description: 'Questions deferred, ambiguities flagged, jurisdictional or cross-border issues.' },
+        { title: 'Action and drafting', description: 'Documents to draft, revisions, registrations, deadlines, and the lawyer-sought follow-ups.' },
+    ],
 };
 
 const TEMPLATE_SYSTEM_PROMPTS: Record<ModeTemplateType, string> = {
@@ -193,6 +205,7 @@ const TEMPLATE_SYSTEM_PROMPTS: Record<ModeTemplateType, string> = {
     recruiting: MODE_RECRUITING_PROMPT,
     'team-meet': MODE_TEAM_MEET_PROMPT,
     lecture: MODE_LECTURE_PROMPT,
+    lawyer: MODE_LAWYER_PROMPT,
 };
 
 // Startup invariant: every MODE_*_PROMPT must begin with one of the two shared
@@ -356,6 +369,12 @@ export class ModesManager {
         if (!modes.some(m => m.templateType === 'general')) {
             this.createMode({ name: 'General', templateType: 'general' });
         }
+        // Auto-seed a Lawyer mode (wills/trusts/deeds consulting) so the
+        // template is in the dropdown on first launch. Idempotent — skipped
+        // if the user already has one.
+        if (!modes.some(m => m.templateType === 'lawyer')) {
+            this.createMode({ name: 'Lawyer', templateType: 'lawyer' });
+        }
     }
 
     public getActiveMode(): Mode | null {
@@ -436,6 +455,10 @@ export class ModesManager {
         'technical-interview',
         'team-meet',
         'lecture',
+        // Lawyer: legal substance must come from case files / uploaded
+        // statutes, not the generic premium knowledge intercept (which is
+        // tuned for interview / negotiation coaching).
+        'lawyer',
     ]);
 
     /**

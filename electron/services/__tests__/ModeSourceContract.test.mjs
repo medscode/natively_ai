@@ -183,6 +183,8 @@ test('defaultSourceContractForNewMode: per-template allowedExplicitSwitches (ren
     { template: 'recruiting',        expect: ['reference_files'] },
     { template: 'team-meet',         expect: ['reference_files'] },
     { template: 'lecture',           expect: ['reference_files'] },
+    // Lawyer: case-file driven. Falls to the default (non-interview-prep) branch.
+    { template: 'lawyer',            expect: ['reference_files'] },
     { template: 'looking-for-work',  expect: ['profile', 'job_description'] },
     { template: 'technical-interview', expect: ['profile', 'job_description'] },
   ];

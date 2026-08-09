@@ -4052,17 +4052,39 @@ export function initializeIpcHandlers(appState: AppState): void {
     return appState.getCurrentMeetingId();
   });
 
-  // Sparkles button: route manual triggers through SuggestionPipeline so
-  // they use the same path as Suggest-mode auto-triggers. Replaces the
-  // legacy kb:suggest IPC which required an active KB case and failed
-  // with 'no_active_client_case' otherwise.
-  safeHandle('suggestion:run-once', async (_event, question: string) => {
+  // Sparkles button + three-dot "Clarify": route manual triggers through
+  // SuggestionPipeline so they use the same path as Suggest-mode auto-
+  // triggers. Replaces the legacy kb:suggest IPC which required an active
+  // KB case and failed with 'no_active_client_case' otherwise.
+  //
+  // The `clarify` flag tells the pipeline the caller wants a sharpening
+  // pass — used by the Lawyer mode's three-dot Clarify to ask for tighter
+  // pointers, missing statute anchors, and a clarifying bullet. The
+  // pipeline surfaces this via a directive prefix on the prompt.
+  safeHandle('suggestion:run-once', async (_event, question: string, opts?: { clarify?: boolean }) => {
     try {
       if (!question || !question.trim()) return { success: false, error: 'question is required' };
       const pipeline = appState.getSuggestionPipeline?.();
       if (!pipeline) return { success: false, error: 'pipeline not initialized' };
+
+      // Resolve the active mode's templateType. Lawyer mode gets the
+      // tighten-KB-retrieval behavior + the system prompt enforces the
+      // bullet-pointer output shape.
+      let templateType: string | undefined;
+      try {
+        const { ModesManager } = require('./services/ModesManager');
+        templateType = ModesManager.getInstance().getActiveMode()?.templateType;
+      } catch { /* keep undefined */ }
+
+      // If this is a Lawyer-mode Clarify click, augment the question so
+      // the persona's bullet-pointer prompt produces a sharper pass.
+      let resolved = question.trim();
+      if (opts?.clarify && templateType === 'lawyer') {
+        resolved = `Sharpen the prior pointers on: "${resolved}". Cite the missing statute or case-file section inline. If facts are absent, end with one "Clarify: ..." bullet. Output as 2-5 short bullets, no prose.`;
+      }
+
       pipeline.onTranscriptFinal(
-        { question: question.trim(), speaker: 'user' },
+        { question: resolved, speaker: 'user', templateType },
         appState,
       );
       return { success: true };

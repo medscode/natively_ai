@@ -87,7 +87,7 @@ export interface DecideProfileInput {
 }
 
 const MODE_TEMPLATE_TYPES: ReadonlySet<string> = new Set([
-  'general', 'looking-for-work', 'sales', 'recruiting', 'team-meet', 'lecture', 'technical-interview',
+  'general', 'looking-for-work', 'sales', 'recruiting', 'team-meet', 'lecture', 'technical-interview', 'lawyer',
 ]);
 
 /** Normalize the legacy string form into ActiveModeInfo (unknown ids → null). */

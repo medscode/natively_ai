@@ -2967,8 +2967,21 @@ export class AppState {
                 .slice(0, 1500);
               // Note: cooldown + duplicate-question suppression moved inside the
               // pipeline so it composes correctly with revision-based cancel.
+              // Pass the active mode's templateType so the pipeline can
+              // tighten KB retrieval for modes that need precision (Lawyer:
+              // top-2 chunks at 0.5 similarity instead of top-4 at 0.35).
+              let activeTemplateType: string | undefined;
+              try {
+                const { ModesManager } = require('./services/ModesManager');
+                activeTemplateType = ModesManager.getInstance().getActiveMode()?.templateType;
+              } catch { /* keep undefined → default retrieval */ }
               getSuggestionPipeline().onTranscriptFinal(
-                { question: q, transcriptContext, speaker: speaker as 'interviewer' | 'user' },
+                {
+                  question: q,
+                  transcriptContext,
+                  speaker: speaker as 'interviewer' | 'user',
+                  templateType: activeTemplateType,
+                },
                 this,
               );
             } catch (err: any) {

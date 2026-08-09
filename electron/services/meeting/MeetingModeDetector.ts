@@ -15,7 +15,8 @@ export type DetectableTemplateType =
   | 'team-meet'
   | 'looking-for-work'
   | 'technical-interview'
-  | 'lecture';
+  | 'lecture'
+  | 'lawyer';
 
 export interface ModeDetectionInput {
   transcript: TranscriptSegment[];
@@ -72,6 +73,16 @@ const SIGNALS: Record<Exclude<DetectableTemplateType, 'general'>, Array<{ re: Re
     { re: /\b(this role|the team|the company|the position|interview process)\b/i, w: 1, label: 'opportunity' },
     { re: /\b(my background|i worked on|i led|i built|my strengths)\b/i, w: 2, label: 'self-presentation' },
   ],
+  // Lawyer (wills/trusts/deeds). Kept narrow on purpose — the active mode is
+  // almost always chosen by the lawyer manually via the dropdown, so
+  // auto-detection just needs to nudge the renderer toward Lawyer when the
+  // transcript mentions wills/trusts/deeds vocabulary.
+  lawyer: [
+    { re: /\b(will|testament|testator|executor|probate|codicil)\b/i, w: 2, label: 'wills' },
+    { re: /\b(trust|trustee|settlor|beneficiary)\b/i, w: 2, label: 'trusts' },
+    { re: /\b(sale deed|gift deed|settlement deed|partition deed|registration|attestation)\b/i, w: 2, label: 'deeds' },
+    { re: /\b(succession|estate|heir|inheritance)\b/i, w: 1, label: 'estate' },
+  ],
 };
 
 const TITLE_HINTS: Array<{ re: RegExp; type: DetectableTemplateType; w: number }> = [
@@ -83,7 +94,7 @@ const TITLE_HINTS: Array<{ re: RegExp; type: DetectableTemplateType; w: number }
 ];
 
 function emptyScores(): Record<DetectableTemplateType, number> {
-  return { general: 0, sales: 0, recruiting: 0, 'team-meet': 0, 'looking-for-work': 0, 'technical-interview': 0, lecture: 0 };
+  return { general: 0, sales: 0, recruiting: 0, 'team-meet': 0, 'looking-for-work': 0, 'technical-interview': 0, lecture: 0, lawyer: 0 };
 }
 
 export class MeetingModeDetector {

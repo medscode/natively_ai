@@ -129,7 +129,7 @@ export interface ElectronAPI {
   }>>
   // Sparkles button: invoke the SuggestionPipeline directly so manual
   // triggers use the same path as Suggest-mode auto-triggers.
-  suggestionRunOnce: (question: string) => Promise<{ success: boolean }>
+  suggestionRunOnce: (question: string, opts?: { clarify?: boolean }) => Promise<{ success: boolean }>
   // Phase D / Bug D: real meeting UUID instead of 'live-meeting-current'.
   // Allocated on startMeeting, broadcast via meeting-state-changed, used by
   // the SuggestionPipeline so suggestions persist correctly to the meeting.

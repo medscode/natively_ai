@@ -115,7 +115,7 @@ const LECTURE_RECALL_RE = /\b(which lecture|last lecture|previous lecture|across
 
 // Mode template ids planAnswer/decideProfileIntelligence accept as a routing prior.
 const MODE_TEMPLATE_TYPES = new Set([
-  'general', 'looking-for-work', 'sales', 'recruiting', 'team-meet', 'lecture', 'technical-interview',
+  'general', 'looking-for-work', 'sales', 'recruiting', 'team-meet', 'lecture', 'technical-interview', 'lawyer',
 ]);
 
 /** Normalize a mode-id string into the ActiveModeInfo planAnswer expects (or null). */

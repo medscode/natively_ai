@@ -33,7 +33,8 @@
 // store is the resolver — not yet the live default.
 
 export type MemoryMode = 'general' | 'interview' | 'technical-interview' | 'looking-for-work'
-  | 'coding' | 'sales' | 'lecture' | 'team-meet' | 'recruiting' | 'negotiation';
+  | 'coding' | 'sales' | 'lecture' | 'team-meet' | 'recruiting' | 'negotiation'
+  | 'lawyer';
 
 export type MemoryItemKind =
   | 'project'     // a named project on the table ("Natively", "TalentScope")
@@ -102,6 +103,11 @@ const MODE_ALLOWED_KINDS: Record<MemoryMode, Set<MemoryItemKind>> = {
   recruiting: new Set<MemoryItemKind>(['project', 'skill', 'company', 'jd_topic']),
   // Negotiation is the ONLY mode that may recall comp; it also sees role/jd context.
   negotiation: new Set<MemoryItemKind>(['comp', 'jd_topic', 'company']),
+  // Lawyer: legal matters involve people (clients, beneficiaries,
+  // executors), companies (trust entities, property holdings), and prior
+  // decisions (court rulings, prior advice given). Topic recall helps
+  // re-ground across successive wills/trusts/deeds sessions.
+  lawyer: new Set<MemoryItemKind>(['person', 'company', 'decision', 'topic']),
 };
 
 // Half-life (seconds) for salience decay, by kind. Pinned/entity items live longer.

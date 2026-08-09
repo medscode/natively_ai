@@ -1041,10 +1041,24 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                 ].map(item => (
                                                     <button
                                                         key={item.action}
-                                                        onClick={() => {
+                                                        onClick={async () => {
                                                             setShowMore(false);
                                                             if (item.action === 'whatToSay') window.electronAPI?.generateWhatToSay?.();
-                                                            else if (item.action === 'clarify') window.electronAPI?.generateClarify?.();
+                                                            else if (item.action === 'clarify') {
+                                                                // Mode-aware Clarify: pull the latest
+                                                                // interviewer/user/chat line, then route
+                                                                // through the SuggestionPipeline with the
+                                                                // `clarify: true` flag. The main process
+                                                                // detects the active mode (Lawyer →
+                                                                // sharpening directive, other modes → passthrough).
+                                                                const segs = liveSegmentsRef.current || [];
+                                                                const lastInterviewer = [...segs].reverse().find(s => s.role === 'interviewer' && s.text?.trim());
+                                                                const lastUserSeg = [...segs].reverse().find(s => s.role === 'user' && s.text?.trim());
+                                                                const lastChat = [...messages].reverse().find(m => m.role === 'user')?.content;
+                                                                const latest = (lastInterviewer?.text || lastUserSeg?.text || lastChat || '').trim();
+                                                                if (!latest) return;
+                                                                await window.electronAPI?.suggestionRunOnce?.(latest, { clarify: true });
+                                                            }
                                                             else if (item.action === 'recap') window.electronAPI?.generateRecap?.();
                                                             else if (item.action === 'followUp') window.electronAPI?.generateFollowUpQuestions?.();
                                                             else if (item.action === 'answerNow') window.electronAPI?.generateCodeHint?.();

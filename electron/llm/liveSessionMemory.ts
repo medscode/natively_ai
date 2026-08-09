@@ -55,6 +55,9 @@ export function toMemoryMode(modeId: string | undefined): MemoryMode {
     case 'sales': return 'sales';
     case 'lecture': return 'lecture';
     case 'team-meet': return 'team-meet';
+    // Lawyer: isolated recall pool so prior wills/trusts/deeds cases don't
+    // bleed into general-mode sessions (and vice versa).
+    case 'lawyer': return 'lawyer';
     case 'general': default: return 'general';
   }
 }

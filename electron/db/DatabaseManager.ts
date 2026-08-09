@@ -768,6 +768,14 @@ export class DatabaseManager {
                 INSERT OR IGNORE INTO modes (id, name, template_type, custom_context, is_active)
                 VALUES (?, ?, ?, ?, 1)
             `).run(defaultModeId, 'General', 'general', '');
+            // Seed a default "Lawyer" mode (wills/trusts/deeds consulting)
+            // so the template is in the dropdown on first launch. Inactive
+            // by default — the user opts in by selecting it.
+            const defaultLawyerModeId = 'mode_lawyer_default';
+            this.db.prepare(`
+                INSERT OR IGNORE INTO modes (id, name, template_type, custom_context, is_active)
+                VALUES (?, ?, ?, ?, 0)
+            `).run(defaultLawyerModeId, 'Lawyer', 'lawyer', '');
             this.db.pragma('user_version = 11');
         }
 

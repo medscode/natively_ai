@@ -53,7 +53,8 @@ export type ContractTemplateType =
   | 'recruiting'
   | 'team-meet'
   | 'lecture'
-  | 'technical-interview';
+  | 'technical-interview'
+  | 'lawyer';
 
 export type ModeConflictPolicy =
   | 'reference_files_win'
@@ -207,7 +208,8 @@ function isContractTemplateType(s: string | undefined): s is ContractTemplateTyp
     || s === 'recruiting'
     || s === 'team-meet'
     || s === 'lecture'
-    || s === 'technical-interview';
+    || s === 'technical-interview'
+    || s === 'lawyer';
 }
 
 /**
