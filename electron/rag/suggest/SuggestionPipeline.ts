@@ -25,6 +25,8 @@
 
 import { getRevisionTracker, RevisionTracker } from './RevisionTracker';
 import type { AppState } from '../../main';
+import { rewriteQuery } from '../QueryRewriter';
+import { verifyCitations } from '../CitationVerifier';
 
 export interface SuggestionPipelineInput {
     /** STT-final transcript segment text (interviewer's question). */
@@ -173,18 +175,45 @@ export class SuggestionPipeline {
 
         // Retrieval with a soft deadline.
         // Use authority-aware retrieval across shared legal KB and active case
+        // ── Phase 2: Query Rewriting (HyDE-Lite) ──────────────────────────
+        // Fire rewrite in parallel with raw retrieval — doesn't add latency
+        const llmHelperForRewrite = appState.processingHelper.getLLMHelper();
         const retrievalOpts = input.templateType === 'lawyer'
             ? { limit: 4, minSimilarity: 0.35 }
             : { limit: 4, minSimilarity: 0.35 };
-        const retrievalPromise = kb.querySharedAndCaseKB(
-            input.question,
-            active.clientCaseId,
-            retrievalOpts,
-        );
-        const retrievalResult = await Promise.race([
-            retrievalPromise,
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
+
+        const [rawRetrievalResult, rewriteResult] = await Promise.all([
+            Promise.race([
+                kb.querySharedAndCaseKB(input.question, active.clientCaseId, retrievalOpts),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
+            ]),
+            rewriteQuery(input.question, llmHelperForRewrite).catch(() => null),
         ]);
+        if (abort.signal.aborted || this.rev.isStale(revision)) return;
+
+        // If rewrite produced a different query, search with it too and merge
+        let retrievalResult = rawRetrievalResult;
+        if (rewriteResult?.wasRewritten && rewriteResult.rewrittenQuery !== input.question && rawRetrievalResult) {
+            try {
+                const rewrittenRetrieval = await Promise.race([
+                    kb.querySharedAndCaseKB(rewriteResult.rewrittenQuery, active.clientCaseId, retrievalOpts),
+                    new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
+                ]);
+                if (rewrittenRetrieval?.chunks?.length > 0 && rawRetrievalResult) {
+                    // Merge & deduplicate
+                    const seen = new Map<number, any>();
+                    for (const c of [...(rawRetrievalResult as any).chunks, ...rewrittenRetrieval.chunks]) {
+                        const existing = seen.get(c.id);
+                        if (!existing || c.authorityScore > existing.authorityScore) {
+                            seen.set(c.id, c);
+                        }
+                    }
+                    const mergedChunks = Array.from(seen.values()).sort((a: any, b: any) => b.authorityScore - a.authorityScore);
+                    retrievalResult = { ...(rawRetrievalResult as any), chunks: mergedChunks };
+                    console.log(`[SuggestionPipeline] Merged raw + rewritten → ${mergedChunks.length} unique chunks`);
+                }
+            } catch { /* rewritten search failed, use raw */ }
+        }
         if (abort.signal.aborted || this.rev.isStale(revision)) return;
 
         const chunks = (retrievalResult && (retrievalResult as any).chunks) || [];
@@ -283,12 +312,16 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
             return;
         }
 
-        // Done — emit final.
+        // ── Phase 4: Citation Verification (Hallucination Gate) ───────────
+        const verification = verifyCitations(accumulated, chunks);
+        const verifiedText = verification.verifiedResponse;
+
+        // Done — emit final with verified text.
         this.emit(appState, {
             kind: 'done',
             revision,
             question: input.question,
-            text: accumulated,
+            text: verifiedText,
             citations,
             ttftMs: firstTokenAt ? firstTokenAt - startedAt : undefined,
             totalMs: Date.now() - startedAt,

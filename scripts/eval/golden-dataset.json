@@ -1,0 +1,407 @@
+{
+  "version": "1.0",
+  "description": "Golden dataset for evaluating the Natively Legal RAG pipeline. Each question simulates a real client question during a lawyer consultation.",
+  "categories": ["property_law", "succession_wills", "civil_procedure", "trust_law", "fema", "criminal", "general"],
+  "questions": [
+    {
+      "id": "q001",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "My brother grabbed the ancestral land, what can I do?",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 6"],
+      "expectedTopics": ["partition", "coparcenary", "ancestral property", "joint family"],
+      "expectedBottomLine": "You have a right to seek partition of the ancestral property"
+    },
+    {
+      "id": "q002",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "Can I take back the gift I gave to my son last year?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 126"],
+      "expectedTopics": ["revocation of gift", "conditions", "donee consent"],
+      "expectedBottomLine": "A gift can only be revoked if there was a prior agreement or condition"
+    },
+    {
+      "id": "q003",
+      "category": "property_law",
+      "difficulty": "easy",
+      "clientQuestion": "What is a gift deed and how is it different from a will?",
+      "expectedActs": ["Transfer of Property Act, 1882", "Indian Succession Act, 1925"],
+      "expectedSections": ["Sec. 122", "Sec. 123"],
+      "expectedTopics": ["gift deed", "will", "transfer", "registration", "irrevocable"],
+      "expectedBottomLine": "A gift takes effect during the donor's lifetime while a will operates after death"
+    },
+    {
+      "id": "q004",
+      "category": "property_law",
+      "difficulty": "hard",
+      "clientQuestion": "My father gifted the house but kept living there. Now he passed away and my uncle says the gift was invalid because there was no delivery.",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 122", "Sec. 123"],
+      "expectedTopics": ["delivery of possession", "acceptance", "registered deed", "constructive delivery"],
+      "expectedBottomLine": "For immovable property, a registered gift deed constitutes valid transfer even without physical delivery"
+    },
+    {
+      "id": "q005",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "My father died without a will. Who gets his property?",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 8", "Sec. 9"],
+      "expectedTopics": ["intestate succession", "Class I heirs", "simultaneous heirs"],
+      "expectedBottomLine": "Property devolves on Class I heirs simultaneously and equally"
+    },
+    {
+      "id": "q006",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "Does my daughter have the same rights as my son in the family property?",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 6"],
+      "expectedTopics": ["coparcenary", "daughter's rights", "2005 amendment", "equal share"],
+      "expectedBottomLine": "After the 2005 amendment, daughters have equal coparcenary rights as sons"
+    },
+    {
+      "id": "q007",
+      "category": "civil_procedure",
+      "difficulty": "hard",
+      "clientQuestion": "Someone is about to sell the property that we are disputing in court. Can we stop the sale?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Order XXXIX", "Sec. 94"],
+      "expectedTopics": ["temporary injunction", "restraining order", "prima facie case", "balance of convenience"],
+      "expectedBottomLine": "You can apply for a temporary injunction under Order XXXIX to restrain the sale"
+    },
+    {
+      "id": "q008",
+      "category": "civil_procedure",
+      "difficulty": "medium",
+      "clientQuestion": "How long does a civil suit usually take and what is the process?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Order VII", "Sec. 26"],
+      "expectedTopics": ["plaint", "written statement", "issues", "trial", "decree"],
+      "expectedBottomLine": "A civil suit begins with filing a plaint and follows stages of pleadings, framing of issues, evidence, and decree"
+    },
+    {
+      "id": "q009",
+      "category": "trust_law",
+      "difficulty": "medium",
+      "clientQuestion": "I want to set up a trust for my children's education. What do I need?",
+      "expectedActs": ["Indian Trusts Act, 1882"],
+      "expectedSections": ["Sec. 3", "Sec. 5", "Sec. 6"],
+      "expectedTopics": ["trust deed", "trustee", "beneficiary", "trust property", "lawful purpose"],
+      "expectedBottomLine": "You need a trust deed specifying the trustee, beneficiaries, trust property, and the purpose"
+    },
+    {
+      "id": "q010",
+      "category": "trust_law",
+      "difficulty": "hard",
+      "clientQuestion": "Can I remove the trustee if he is mismanaging the trust funds?",
+      "expectedActs": ["Indian Trusts Act, 1882"],
+      "expectedSections": ["Sec. 36", "Sec. 73"],
+      "expectedTopics": ["removal of trustee", "breach of trust", "court intervention", "beneficiary rights"],
+      "expectedBottomLine": "A trustee can be removed by the court for breach of trust or mismanagement"
+    },
+    {
+      "id": "q011",
+      "category": "property_law",
+      "difficulty": "easy",
+      "clientQuestion": "What documents do I need to buy a flat?",
+      "expectedActs": ["Transfer of Property Act, 1882", "Registration Act, 1908"],
+      "expectedSections": ["Sec. 54", "Sec. 17"],
+      "expectedTopics": ["sale deed", "registration", "stamp duty", "title search", "encumbrance certificate"],
+      "expectedBottomLine": "You need a registered sale deed, title verification, encumbrance certificate, and payment of stamp duty"
+    },
+    {
+      "id": "q012",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "My tenant has not paid rent for 6 months but refuses to leave. What can I do?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 106", "Sec. 111"],
+      "expectedTopics": ["eviction", "lease termination", "notice", "rent default", "forfeiture"],
+      "expectedBottomLine": "You can issue a notice of termination and file an eviction suit for non-payment of rent"
+    },
+    {
+      "id": "q013",
+      "category": "fema",
+      "difficulty": "hard",
+      "clientQuestion": "I am an NRI. Can I buy agricultural land in India?",
+      "expectedActs": ["Foreign Exchange Management Act, 1999"],
+      "expectedSections": ["Sec. 6"],
+      "expectedTopics": ["NRI property", "agricultural land", "FEMA regulations", "RBI permission"],
+      "expectedBottomLine": "NRIs cannot acquire agricultural land, plantation property, or farmhouse in India without RBI approval"
+    },
+    {
+      "id": "q014",
+      "category": "fema",
+      "difficulty": "medium",
+      "clientQuestion": "Can I send money to my family in India from abroad? Is there a limit?",
+      "expectedActs": ["Foreign Exchange Management Act, 1999"],
+      "expectedSections": ["Sec. 5", "Sec. 6"],
+      "expectedTopics": ["inward remittance", "LRS", "repatriation", "current account transactions"],
+      "expectedBottomLine": "There is no limit on inward remittances to India, but outward remittances are subject to the Liberalized Remittance Scheme limit"
+    },
+    {
+      "id": "q015",
+      "category": "succession_wills",
+      "difficulty": "easy",
+      "clientQuestion": "Can I disinherit one of my children in my will?",
+      "expectedActs": ["Indian Succession Act, 1925"],
+      "expectedSections": ["Sec. 59"],
+      "expectedTopics": ["testamentary freedom", "disinheritance", "self-acquired property", "will validity"],
+      "expectedBottomLine": "You can disinherit any legal heir from self-acquired property through a valid will"
+    },
+    {
+      "id": "q016",
+      "category": "succession_wills",
+      "difficulty": "hard",
+      "clientQuestion": "My mother made a will but she had Alzheimer's. Can we challenge it?",
+      "expectedActs": ["Indian Succession Act, 1925"],
+      "expectedSections": ["Sec. 59", "Sec. 63"],
+      "expectedTopics": ["testamentary capacity", "sound mind", "undue influence", "will contest", "probate"],
+      "expectedBottomLine": "A will can be challenged if the testator lacked mental capacity to understand its nature and effects at the time of making it"
+    },
+    {
+      "id": "q017",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "Someone has been illegally occupying my land for 15 years. Have I lost my rights?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 27"],
+      "expectedTopics": ["adverse possession", "limitation period", "title extinguishment", "open possession"],
+      "expectedBottomLine": "After 12 years of continuous, open, and hostile possession, the occupier may claim title by adverse possession"
+    },
+    {
+      "id": "q018",
+      "category": "civil_procedure",
+      "difficulty": "medium",
+      "clientQuestion": "I won the case but the other party is not following the court order. What can I do?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Sec. 36", "Order XXI"],
+      "expectedTopics": ["execution of decree", "contempt", "enforcement", "attachment"],
+      "expectedBottomLine": "You can file an execution petition under Order XXI to enforce the decree"
+    },
+    {
+      "id": "q019",
+      "category": "property_law",
+      "difficulty": "hard",
+      "clientQuestion": "My neighbour built a wall on my land. I have the documents to prove it's my land. What should I do?",
+      "expectedActs": ["Code of Civil Procedure, 1908", "Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 9"],
+      "expectedTopics": ["encroachment", "suit for possession", "injunction", "boundary dispute", "survey"],
+      "expectedBottomLine": "You can file a suit for recovery of possession and mandatory injunction to remove the encroachment"
+    },
+    {
+      "id": "q020",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "What happens if two wills exist and they say different things?",
+      "expectedActs": ["Indian Succession Act, 1925"],
+      "expectedSections": ["Sec. 62", "Sec. 70"],
+      "expectedTopics": ["revocation by later will", "codicil", "inconsistent provisions", "probate"],
+      "expectedBottomLine": "A later will revokes the earlier will to the extent of any inconsistency"
+    },
+    {
+      "id": "q021",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "Can I sell my share in a jointly owned property without the other owner's consent?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 44"],
+      "expectedTopics": ["co-ownership", "undivided share", "right to transfer", "partition"],
+      "expectedBottomLine": "A co-owner can sell their undivided share without the consent of other co-owners"
+    },
+    {
+      "id": "q022",
+      "category": "civil_procedure",
+      "difficulty": "easy",
+      "clientQuestion": "I lost the case in district court. Can I go to a higher court?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Sec. 96", "Sec. 100"],
+      "expectedTopics": ["appeal", "first appeal", "second appeal", "substantial question of law"],
+      "expectedBottomLine": "You have a right to file a first appeal against the decree in the High Court"
+    },
+    {
+      "id": "q023",
+      "category": "property_law",
+      "difficulty": "hard",
+      "clientQuestion": "I paid the full price for a flat but the builder hasn't given me possession or the deed. What are my options?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 53A"],
+      "expectedTopics": ["part performance", "specific performance", "builder dispute", "registered agreement"],
+      "expectedBottomLine": "Under the doctrine of part performance, you can claim protection and file a suit for specific performance"
+    },
+    {
+      "id": "q024",
+      "category": "trust_law",
+      "difficulty": "easy",
+      "clientQuestion": "What is the difference between a public trust and a private trust?",
+      "expectedActs": ["Indian Trusts Act, 1882"],
+      "expectedSections": ["Sec. 3"],
+      "expectedTopics": ["public trust", "private trust", "charitable purpose", "specific beneficiaries"],
+      "expectedBottomLine": "A private trust is for specific individuals while a public trust benefits the general public or a section of it"
+    },
+    {
+      "id": "q025",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "My husband died and his family says I have no right to his property because we had a love marriage.",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 8", "Sec. 15"],
+      "expectedTopics": ["widow's rights", "Class I heir", "intestate succession", "marriage validity"],
+      "expectedBottomLine": "As a legally married wife, you are a Class I heir and have equal right to your husband's property regardless of marriage type"
+    },
+    {
+      "id": "q026",
+      "category": "criminal",
+      "difficulty": "medium",
+      "clientQuestion": "Someone is sending me threatening messages. Can I file a case?",
+      "expectedActs": ["Bharatiya Nyaya Sanhita, 2023"],
+      "expectedSections": ["Sec. 351"],
+      "expectedTopics": ["criminal intimidation", "FIR", "cyber crime", "threatening messages"],
+      "expectedBottomLine": "You can file an FIR for criminal intimidation and if done online, also under IT Act provisions"
+    },
+    {
+      "id": "q027",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "I gave someone power of attorney to manage my property. Can they sell it without asking me?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 54"],
+      "expectedTopics": ["power of attorney", "general vs special", "authority to sell", "revocation"],
+      "expectedBottomLine": "Only if the power of attorney specifically authorizes sale; a general POA does not automatically include sale authority"
+    },
+    {
+      "id": "q028",
+      "category": "fema",
+      "difficulty": "medium",
+      "clientQuestion": "My father is an NRI and wants to transfer his Indian property to me. Is there any restriction?",
+      "expectedActs": ["Foreign Exchange Management Act, 1999"],
+      "expectedSections": ["Sec. 6"],
+      "expectedTopics": ["NRI property transfer", "gift to resident", "residential property", "FEMA compliance"],
+      "expectedBottomLine": "An NRI can gift or sell residential and commercial property to a person resident in India"
+    },
+    {
+      "id": "q029",
+      "category": "civil_procedure",
+      "difficulty": "hard",
+      "clientQuestion": "The other party in my case keeps getting adjournments. Can I do anything to speed up the trial?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Order XVII", "Sec. 151"],
+      "expectedTopics": ["adjournment abuse", "case management", "costs", "expeditious trial"],
+      "expectedBottomLine": "You can oppose adjournments, seek costs for delay, and request the court to fix a strict timeline"
+    },
+    {
+      "id": "q030",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "What is the difference between a lease and a license for my shop?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 105", "Sec. 52"],
+      "expectedTopics": ["lease vs license", "exclusive possession", "revocable", "tenancy rights"],
+      "expectedBottomLine": "A lease creates an interest in property with exclusive possession while a license merely permits use without creating any interest"
+    },
+    {
+      "id": "q031",
+      "category": "succession_wills",
+      "difficulty": "easy",
+      "clientQuestion": "How do I write a will? Do I need a lawyer?",
+      "expectedActs": ["Indian Succession Act, 1925"],
+      "expectedSections": ["Sec. 63"],
+      "expectedTopics": ["will execution", "attestation", "witnesses", "registration optional"],
+      "expectedBottomLine": "A will must be signed by the testator and attested by two witnesses; a lawyer is not legally required but recommended"
+    },
+    {
+      "id": "q032",
+      "category": "property_law",
+      "difficulty": "hard",
+      "clientQuestion": "I sold my property but now the buyer says there are old debts attached to it. Am I liable?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 55"],
+      "expectedTopics": ["seller's duty to disclose", "encumbrance", "material defects", "title warranty"],
+      "expectedBottomLine": "The seller has a duty to disclose material defects and known encumbrances; undisclosed charges may make the sale voidable"
+    },
+    {
+      "id": "q033",
+      "category": "trust_law",
+      "difficulty": "medium",
+      "clientQuestion": "Can a trust own property in its own name?",
+      "expectedActs": ["Indian Trusts Act, 1882"],
+      "expectedSections": ["Sec. 3", "Sec. 10"],
+      "expectedTopics": ["trust property", "vesting", "trustee title", "beneficial ownership"],
+      "expectedBottomLine": "Trust property is held in the name of the trustee for the benefit of the beneficiary; the trust itself is not a legal person"
+    },
+    {
+      "id": "q034",
+      "category": "civil_procedure",
+      "difficulty": "medium",
+      "clientQuestion": "Can we settle the case out of court even after the case has been filed?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Sec. 89", "Order XXIII"],
+      "expectedTopics": ["settlement", "mediation", "lok adalat", "consent decree", "compromise"],
+      "expectedBottomLine": "Yes, parties can settle at any stage through mediation, lok adalat, or by recording a compromise decree"
+    },
+    {
+      "id": "q035",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "Someone forged my father's signature on a sale deed. What can I do?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 54"],
+      "expectedTopics": ["forgery", "void ab initio", "declaratory suit", "cancellation of deed"],
+      "expectedBottomLine": "A forged deed is void ab initio and you can file a suit for declaration and cancellation of the fraudulent document"
+    },
+    {
+      "id": "q036",
+      "category": "succession_wills",
+      "difficulty": "hard",
+      "clientQuestion": "My father had two wives. How will his property be divided?",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 8", "Sec. 10"],
+      "expectedTopics": ["polygamy", "Class I heirs", "equal share", "widow's share"],
+      "expectedBottomLine": "Both widows are Class I heirs and will receive equal shares along with children"
+    },
+    {
+      "id": "q037",
+      "category": "property_law",
+      "difficulty": "easy",
+      "clientQuestion": "What is stamp duty and who pays it?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 54"],
+      "expectedTopics": ["stamp duty", "buyer responsibility", "registration", "market value"],
+      "expectedBottomLine": "Stamp duty is a tax on property transactions typically paid by the buyer at rates set by the state government"
+    },
+    {
+      "id": "q038",
+      "category": "civil_procedure",
+      "difficulty": "hard",
+      "clientQuestion": "I filed a case but the court says it doesn't have jurisdiction. What does that mean?",
+      "expectedActs": ["Code of Civil Procedure, 1908"],
+      "expectedSections": ["Sec. 15", "Sec. 16", "Sec. 20"],
+      "expectedTopics": ["territorial jurisdiction", "pecuniary jurisdiction", "subject matter jurisdiction", "court hierarchy"],
+      "expectedBottomLine": "Jurisdiction determines which court can hear your case based on location, value, and subject matter of the dispute"
+    },
+    {
+      "id": "q039",
+      "category": "property_law",
+      "difficulty": "medium",
+      "clientQuestion": "My builder is not completing the construction on time. What legal action can I take?",
+      "expectedActs": ["Transfer of Property Act, 1882"],
+      "expectedSections": ["Sec. 53A"],
+      "expectedTopics": ["builder delay", "specific performance", "compensation", "consumer complaint", "RERA"],
+      "expectedBottomLine": "You can file a complaint under RERA for delay and seek compensation or refund with interest"
+    },
+    {
+      "id": "q040",
+      "category": "succession_wills",
+      "difficulty": "medium",
+      "clientQuestion": "Can an adopted child inherit property from the biological parents?",
+      "expectedActs": ["Hindu Succession Act, 1956"],
+      "expectedSections": ["Sec. 12"],
+      "expectedTopics": ["adoption", "inheritance rights", "biological parents", "adoptive parents"],
+      "expectedBottomLine": "An adopted child loses inheritance rights from biological parents and acquires rights in the adoptive family"
+    }
+  ]
+}

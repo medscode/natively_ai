@@ -11,6 +11,7 @@ import { EmbeddingPipeline } from './EmbeddingPipeline';
 import { chunkTranscript } from './SemanticChunker';
 import type { Chunk } from './SemanticChunker';
 import { preprocessTranscript, type RawSegment } from './TranscriptPreprocessor';
+import { chunkLegalDocument, isStatutoryText } from './LegalDocumentChunker';
 
 // ── Shared KB Constants ────────────────────────────────────────────────
 
@@ -240,15 +241,34 @@ export class KnowledgeBaseManager {
             return { success: false, error: `Extraction failed: ${e?.message || e}` };
         }
 
-        // Chunk the text using the existing pipeline
-        const rawSegments: RawSegment[] = [{
-            speaker: 'source',
-            text: extractedText,
-            timestamp: 0,
-        }];
+        // Choose chunking strategy based on document type:
+        // - Legal documents (shared KB, authoritative sources, statutory text) → LegalDocumentChunker
+        // - Everything else (transcripts, general docs) → existing SemanticChunker pipeline
+        const isLegalDoc =
+            params.clientCaseId === SHARED_KB_CASE_ID ||
+            (params.metadata?.authority_tier != null) ||
+            (params.metadata?.source_category && ['acts', 'judgements', 'amendments', 'commentaries'].includes(params.metadata.source_category)) ||
+            isStatutoryText(extractedText);
 
-        const cleaned = preprocessTranscript(rawSegments);
-        const chunks = chunkTranscript(params.clientCaseId, cleaned);
+        let chunks: Chunk[];
+        if (isLegalDoc) {
+            console.log(`[KnowledgeBaseManager] Using LegalDocumentChunker for "${resolvedTitle}"`);
+            chunks = chunkLegalDocument(params.clientCaseId, extractedText, {
+                docTitle: resolvedTitle,
+                forceStatutory: params.metadata?.source_category === 'acts' ||
+                    params.metadata?.source_category === 'amendments',
+            });
+        } else {
+            // Existing transcript-based chunking for non-legal content
+            const rawSegments: RawSegment[] = [{
+                speaker: 'source',
+                text: extractedText,
+                timestamp: 0,
+            }];
+            const cleaned = preprocessTranscript(rawSegments);
+            chunks = chunkTranscript(params.clientCaseId, cleaned);
+        }
+
         let chunkIds: number[] = [];
 
         if (chunks.length > 0 && this.vectorStore) {
@@ -475,6 +495,45 @@ export class KnowledgeBaseManager {
                     authorityScore,
                     needsVerification: meta.authorityTier === 'bending',
                 });
+            }
+
+            // ── Phase 3: Cross-Encoder Reranking ──────────────────────────
+            // Use the existing LocalReranker (BGE-reranker-base ONNX) to re-score
+            // candidates more accurately. The cross-encoder reads (query, passage)
+            // jointly — much more precise than cosine similarity alone.
+            // Falls through to cosine × authority scoring if the reranker is
+            // unavailable (model not downloaded, poisoned, or timed out).
+            try {
+                const { getLocalReranker } = require('./LocalReranker');
+                const reranker = getLocalReranker();
+                if (allChunks.length > 1) {
+                    const passages = allChunks.map(c => c.text);
+                    const RERANK_TIMEOUT_MS = 100;
+                    const rerankResults = await Promise.race([
+                        reranker.rerank(query, passages),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), RERANK_TIMEOUT_MS)),
+                    ]);
+                    if (rerankResults && rerankResults.length === allChunks.length) {
+                        // Blend cross-encoder score with authority boost:
+                        // finalScore = crossEncoderScore * 0.6 + authorityBoost * 0.4
+                        // Normalize cross-encoder scores to 0-1 range using sigmoid
+                        const maxCE = Math.max(...rerankResults.map((r: any) => r.score));
+                        const minCE = Math.min(...rerankResults.map((r: any) => r.score));
+                        const rangeCE = maxCE - minCE || 1;
+                        for (const rr of rerankResults) {
+                            const chunkIdx = rr.index;
+                            if (chunkIdx >= 0 && chunkIdx < allChunks.length) {
+                                const normalizedCE = (rr.score - minCE) / rangeCE;
+                                const boost = AUTHORITY_BOOST[allChunks[chunkIdx].sourceCategory] ?? 1.0;
+                                allChunks[chunkIdx].authorityScore = normalizedCE * 0.6 + (boost / 1.4) * 0.4;
+                            }
+                        }
+                        console.log(`[KnowledgeBaseManager] Cross-encoder reranked ${allChunks.length} chunks`);
+                    }
+                }
+            } catch (e: any) {
+                // Reranker unavailable — keep cosine × authority scoring
+                console.log(`[KnowledgeBaseManager] Reranker unavailable (${e?.message || 'unknown'}), using vector scores`);
             }
 
             // Sort by authority-boosted score (highest first)

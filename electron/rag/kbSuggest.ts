@@ -5,8 +5,14 @@
 // Body extracted from the original `kb:suggest` IPC handler (ipcHandlers.ts:737)
 // so both the IPC channel and the live auto-trigger in main.ts can call it
 // without going through IPC plumbing.
+//
+// 2026-08 enhancements:
+//   - Query rewriting (HyDE-Lite) for layman-to-legal vocabulary bridging
+//   - Citation verification (hallucination gate) post-generation
 
 import type { AppState } from '../main';
+import { rewriteQuery } from './QueryRewriter';
+import { verifyCitations } from './CitationVerifier';
 
 export interface KbSuggestInput {
     question: string;
@@ -19,6 +25,10 @@ export interface KbSuggestResult {
     citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
     question?: string;
     error?: string;
+    /** Query rewrite info (for debugging/eval). */
+    rewriteInfo?: { wasRewritten: boolean; rewrittenQuery?: string; durationMs: number };
+    /** Citation verification info (for debugging/eval). */
+    verificationInfo?: { score: number; verifiedCount: number; unverifiedCount: number };
 }
 
 export async function runKbSuggest(
@@ -43,9 +53,47 @@ export async function runKbSuggest(
         if (vs && ep) kb.setPipeline(vs, ep);
     }
 
-    // Use authority-aware query that searches shared KB + active case
-    const result = await kb.querySharedAndCaseKB(question, active.clientCaseId, { limit: 4 });
-    const chunks = result?.chunks || [];
+    // ── Phase 2: Query Rewriting (HyDE-Lite) ──────────────────────────
+    // Fire the rewrite in parallel with the raw query search.
+    // If rewrite succeeds, we search with BOTH queries and merge results.
+    const llmHelper = appState.processingHelper.getLLMHelper();
+    const [rawResult, rewriteResult] = await Promise.all([
+        kb.querySharedAndCaseKB(question, active.clientCaseId, { limit: 4 }),
+        rewriteQuery(question, llmHelper).catch(() => null),
+    ]);
+
+    // If rewrite produced a different query, search with it too and merge
+    let chunks = rawResult?.chunks || [];
+    let formattedContext = rawResult?.formattedContext || '';
+
+    if (rewriteResult?.wasRewritten && rewriteResult.rewrittenQuery !== question) {
+        try {
+            const rewrittenResult = await kb.querySharedAndCaseKB(
+                rewriteResult.rewrittenQuery,
+                active.clientCaseId,
+                { limit: 4 },
+            );
+            if (rewrittenResult?.chunks?.length > 0) {
+                // Merge & deduplicate by chunk ID, keeping higher authority score
+                const seen = new Map<number, typeof chunks[0]>();
+                for (const c of [...chunks, ...rewrittenResult.chunks]) {
+                    const existing = seen.get(c.id);
+                    if (!existing || c.authorityScore > existing.authorityScore) {
+                        seen.set(c.id, c);
+                    }
+                }
+                chunks = Array.from(seen.values()).sort((a, b) => b.authorityScore - a.authorityScore);
+                // Rebuild formatted context from merged chunks
+                if (chunks.length > rawResult.chunks.length) {
+                    formattedContext = rawResult.formattedContext || '';
+                }
+                console.log(`[kbSuggest] Merged raw (${rawResult.chunks.length}) + rewritten (${rewrittenResult.chunks.length}) → ${chunks.length} unique chunks`);
+            }
+        } catch (e: any) {
+            console.warn('[kbSuggest] Rewritten query search failed:', e?.message);
+        }
+    }
+
     const citations = chunks.map((c, idx: number) => ({
         id: c.id != null ? String(c.id) : `chunk-${idx}`,
         sourceType: c.sourceCategory ?? 'file',
@@ -61,7 +109,7 @@ export async function runKbSuggest(
     }
 
     // Build suggestion prompt with authority-labeled context and strict Indian legal formatting
-    const ctxBlock = result.formattedContext || chunks.map((c, i: number) =>
+    const ctxBlock = formattedContext || chunks.map((c, i: number) =>
         `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
     ).join('\n\n');
 
@@ -78,13 +126,16 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
 3. CITATION CONVENTION: Use the Indian legal notation format: use "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 6 of the Hindu Succession Act, 1956", "Order XXXIX of CPC, 1908"). NEVER use the "§" symbol.
 4. EXACT DOCUMENT CITATION: Explicitly name the document/Act from which the rule is drawn. If relying on secondary sources (⚠️), note that it requires verification.`;
 
-    const llmHelper = appState.processingHelper.getLLMHelper();
     let suggestion = '';
     try {
         suggestion = await llmHelper.chatWithGemini(prompt, undefined, undefined, true);
     } catch (e) {
         suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
     }
+
+    // ── Phase 4: Citation Verification (Hallucination Gate) ───────────
+    const verification = verifyCitations(suggestion, chunks);
+    suggestion = verification.verifiedResponse;
 
     // Send to all renderer windows so MeetingChatPanel picks it up via its
     // own onSuggestion listener
@@ -94,11 +145,28 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
             win.webContents.send('suggestion-generated', {
                 question,
                 suggestion,
-                confidence: 0.85,
+                confidence: verification.score,
                 citations,
+                verificationScore: verification.score,
+                unverifiedCitations: verification.citations.filter(c => !c.verified).map(c => c.citationText),
             });
         }
     });
 
-    return { success: true, suggestion, citations, question };
+    return {
+        success: true,
+        suggestion,
+        citations,
+        question,
+        rewriteInfo: rewriteResult ? {
+            wasRewritten: rewriteResult.wasRewritten,
+            rewrittenQuery: rewriteResult.rewrittenQuery,
+            durationMs: rewriteResult.durationMs,
+        } : undefined,
+        verificationInfo: {
+            score: verification.score,
+            verifiedCount: verification.verifiedCount,
+            unverifiedCount: verification.unverifiedCount,
+        },
+    };
 }
