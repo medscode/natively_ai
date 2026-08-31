@@ -265,8 +265,9 @@ const FLAGS: Record<IntelligenceFlagKey, FlagSpec> = {
   // default OFF for stability (2026-07-09); resolved (2026-07-14) — restored to
   // dev/test/benchmark default-ON. Still OFF in production until validated.
   ragLocalRerank: { env: 'NATIVELY_RAG_LOCAL_RERANK', setting: 'ragLocalRerankEnabled', default: isInternalDevTestContext },
-  // Phase 2 — Reciprocal Rank Fusion across heterogeneous retrieval sources. Default OFF.
-  ragRrfFusion: { env: 'NATIVELY_RAG_RRF_FUSION', setting: 'ragRrfFusionEnabled', default: false },
+  // Phase 2 — Reciprocal Rank Fusion across heterogeneous retrieval sources.
+  // Enabled (2026-08) for shared legal KB authority-weighted retrieval.
+  ragRrfFusion: { env: 'NATIVELY_RAG_RRF_FUSION', setting: 'ragRrfFusionEnabled', default: isInternalDevTestContext },
   // Phase 3 — allow rerank on the live transcript path (prewarmed + budget-guarded).
   // Default OFF for stability (2026-07-09); enable explicitly after soak testing
   // the local ONNX pressure profile on packaged builds.

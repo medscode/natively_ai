@@ -1,5 +1,7 @@
 // electron/rag/KnowledgeBaseManager.ts
 // Knowledge Base orchestrator — manages client/case-scoped document ingestion.
+// Extended (2026-08) with shared legal KB support: two-tier authority system
+// (authoritative vs bending), authority-weighted retrieval, and citation labels.
 
 import * as path from 'path';
 import * as fs from 'fs';
@@ -10,6 +12,40 @@ import { chunkTranscript } from './SemanticChunker';
 import type { Chunk } from './SemanticChunker';
 import { preprocessTranscript, type RawSegment } from './TranscriptPreprocessor';
 
+// ── Shared KB Constants ────────────────────────────────────────────────
+
+/** Sentinel case ID for the shared legal knowledge base (not a real client case). */
+export const SHARED_KB_CASE_ID = '__shared_legal_kb__';
+
+/** Authority tiers — authoritative sources are trusted, bending sources need verification. */
+export type AuthorityTier = 'authoritative' | 'bending';
+
+/**
+ * Source categories within each tier.
+ * Authoritative: acts > judgements > amendments > commentaries
+ * Bending: articles > whitepapers > news
+ */
+export type SourceCategory =
+    | 'acts' | 'judgements' | 'amendments' | 'commentaries'
+    | 'articles' | 'whitepapers' | 'news';
+
+/** Hardcoded authority boost weights — higher means more prioritized in retrieval. */
+export const AUTHORITY_BOOST: Record<SourceCategory, number> = {
+    acts: 1.40,
+    judgements: 1.30,
+    amendments: 1.25,
+    commentaries: 1.15,
+    articles: 0.80,
+    whitepapers: 0.75,
+    news: 0.70,
+};
+
+/** Conflict resolution: authoritative always wins. This is the priority order (index 0 = highest). */
+export const SOURCE_PRIORITY_ORDER: SourceCategory[] = [
+    'acts', 'judgements', 'amendments', 'commentaries',
+    'articles', 'whitepapers', 'news',
+];
+
 export interface KnowledgeSource {
     id: string;
     clientCaseId: string;
@@ -19,6 +55,29 @@ export interface KnowledgeSource {
     metadata?: Record<string, any>;
     indexStatus: string;
     createdAt: string;
+}
+
+export interface AuthorityScoredChunk {
+    /** Original chunk data from VectorStore search. */
+    id: number;
+    meetingId: string;
+    text: string;
+    similarity: number;
+    tokenCount: number;
+    startMs: number;
+    endMs: number;
+    speaker: string;
+    chunkIndex: number;
+    /** Authority tier of the source document. */
+    authorityTier: AuthorityTier;
+    /** Source category (acts, judgements, articles, etc.). */
+    sourceCategory: SourceCategory;
+    /** Title of the source document. */
+    sourceTitle: string;
+    /** Authority-boosted final score. */
+    authorityScore: number;
+    /** Whether this source needs verification (true for all bending sources). */
+    needsVerification: boolean;
 }
 
 export class KnowledgeBaseManager {
@@ -117,6 +176,7 @@ export class KnowledgeBaseManager {
         sourcePath?: string;
         content?: string;
         id?: string;
+        metadata?: Record<string, any>;
     }): Promise<{ success: boolean; source?: KnowledgeSource; error?: string }> {
         const sourceId = params.id || `src_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
@@ -195,12 +255,17 @@ export class KnowledgeBaseManager {
             chunkIds = this.vectorStore.saveChunks(chunks);
         }
 
-        // Save source record
+        // Merge any caller-provided metadata with extraction metadata
+        if (params.metadata) {
+            metadata = { ...metadata, ...params.metadata };
+        }
+
+        // Save source record (INSERT OR REPLACE for idempotent re-ingestion)
         const db = DatabaseManager.getInstance().getDb();
         let dbSaveError: string | null = null;
         if (db) {
             try {
-                db.prepare(`INSERT INTO knowledge_sources (id, client_case_id, source_type, title, metadata_json, index_status, created_at)
+                db.prepare(`INSERT OR REPLACE INTO knowledge_sources (id, client_case_id, source_type, title, metadata_json, index_status, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)`)
                     .run(sourceId, params.clientCaseId, params.sourceType, resolvedTitle,
                         JSON.stringify(metadata), 'indexed', new Date().toISOString());
@@ -293,5 +358,216 @@ export class KnowledgeBaseManager {
             console.warn('[KnowledgeBaseManager] queryKnowledgeBase failed:', e?.message);
             return { chunks: [], formattedContext: '' };
         }
+    }
+
+    // ── Shared KB: Authority-Weighted Query ────────────────────────────
+
+    /**
+     * Query BOTH the shared legal KB and an optional active client case.
+     * Results are scored with authority boosts and returned with tier labels.
+     *
+     * This is the primary query method for the lawyer copilot — it searches
+     * the shared legal knowledge base (Acts, Judgements, Commentaries, etc.)
+     * and, if a client case is active, also searches that case's documents.
+     * Results are ranked by: vector_similarity × authority_boost.
+     */
+    public async querySharedAndCaseKB(
+        query: string,
+        activeCaseId?: string | null,
+        opts?: { limit?: number; minSimilarity?: number }
+    ): Promise<{
+        chunks: AuthorityScoredChunk[];
+        formattedContext: string;
+        authoritativeContext: string;
+        bendingContext: string;
+        citations: Array<{ title: string; tier: AuthorityTier; category: SourceCategory; needsVerification: boolean }>;
+    }> {
+        if (!this.vectorStore || !this.embeddingPipeline) {
+            return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
+        }
+        const limit = opts?.limit || 8;
+        const minSimilarity = opts?.minSimilarity ?? 0.30;
+
+        try {
+            const embeddingResult = await this.embeddingPipeline.getEmbeddingWithFallback(query);
+            const embedding = embeddingResult?.embedding;
+            if (!embedding) {
+                return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
+            }
+            const spaceKey = this.embeddingPipeline.getActiveSpaceKey();
+
+            // Search shared KB
+            const sharedResults = await this.vectorStore.searchSimilar(embedding, {
+                meetingId: SHARED_KB_CASE_ID,
+                limit: limit * 2, // over-fetch for authority reranking
+                minSimilarity,
+                spaceKey,
+            });
+
+            // Search active case (if any and different from shared)
+            let caseResults: any[] = [];
+            if (activeCaseId && activeCaseId !== SHARED_KB_CASE_ID) {
+                caseResults = await this.vectorStore.searchSimilar(embedding, {
+                    meetingId: activeCaseId,
+                    limit,
+                    minSimilarity,
+                    spaceKey,
+                });
+            }
+
+            // Look up source metadata for authority tier resolution
+            const db = DatabaseManager.getInstance().getDb();
+            const sourceMetadataCache = new Map<string, { authorityTier: AuthorityTier; sourceCategory: SourceCategory; title: string }>();
+
+            const resolveSourceMeta = (meetingId: string): { authorityTier: AuthorityTier; sourceCategory: SourceCategory; title: string } => {
+                if (sourceMetadataCache.has(meetingId)) return sourceMetadataCache.get(meetingId)!;
+                // Default: if it's from the shared KB, look up knowledge_sources
+                let tier: AuthorityTier = 'bending';
+                let category: SourceCategory = 'articles';
+                let title = 'Unknown Source';
+                if (db) {
+                    try {
+                        const sources: any[] = db.prepare(
+                            `SELECT title, metadata_json FROM knowledge_sources WHERE client_case_id = ? ORDER BY created_at DESC`
+                        ).all(meetingId);
+                        if (sources.length > 0) {
+                            // Use the first source's metadata (all chunks for a meeting share the case ID)
+                            for (const src of sources) {
+                                const meta = src.metadata_json ? JSON.parse(src.metadata_json) : {};
+                                if (meta.authority_tier) {
+                                    tier = meta.authority_tier as AuthorityTier;
+                                    category = (meta.source_category || 'articles') as SourceCategory;
+                                    title = src.title || title;
+                                    break;
+                                }
+                            }
+                            if (title === 'Unknown Source' && sources[0].title) {
+                                title = sources[0].title;
+                            }
+                        }
+                    } catch { /* ignore */ }
+                }
+                const result = { authorityTier: tier, sourceCategory: category, title };
+                sourceMetadataCache.set(meetingId, result);
+                return result;
+            };
+
+            // Score and merge all results
+            const allChunks: AuthorityScoredChunk[] = [];
+
+            for (const chunk of [...sharedResults, ...caseResults]) {
+                const meta = resolveSourceMeta(chunk.meetingId);
+                const boost = AUTHORITY_BOOST[meta.sourceCategory] ?? 1.0;
+                const authorityScore = (chunk.similarity || 0) * boost;
+                allChunks.push({
+                    id: chunk.id,
+                    meetingId: chunk.meetingId,
+                    text: chunk.text || chunk.cleaned_text || '',
+                    similarity: chunk.similarity || 0,
+                    tokenCount: chunk.tokenCount || 0,
+                    startMs: chunk.startMs || 0,
+                    endMs: chunk.endMs || 0,
+                    speaker: chunk.speaker || 'source',
+                    chunkIndex: chunk.chunkIndex || 0,
+                    authorityTier: meta.authorityTier,
+                    sourceCategory: meta.sourceCategory,
+                    sourceTitle: meta.title,
+                    authorityScore,
+                    needsVerification: meta.authorityTier === 'bending',
+                });
+            }
+
+            // Sort by authority-boosted score (highest first)
+            allChunks.sort((a, b) => b.authorityScore - a.authorityScore);
+
+            // Take top N
+            const topChunks = allChunks.slice(0, limit);
+
+            // Separate into authoritative and bending for prompt formatting
+            const authoritativeChunks = topChunks.filter(c => c.authorityTier === 'authoritative');
+            const bendingChunks = topChunks.filter(c => c.authorityTier === 'bending');
+
+            // Format authoritative context
+            const authoritativeContext = authoritativeChunks.length > 0
+                ? authoritativeChunks.map((c, i) =>
+                    `[${i + 1}] 📖 ${c.sourceTitle} (${c.sourceCategory}):\n${c.text}`
+                ).join('\n\n')
+                : '';
+
+            // Format bending context with verification warnings
+            const bendingContext = bendingChunks.length > 0
+                ? bendingChunks.map((c, i) =>
+                    `[${authoritativeChunks.length + i + 1}] ⚠️ ${c.sourceTitle} (${c.sourceCategory}) [NEEDS VERIFICATION]:\n${c.text}`
+                ).join('\n\n')
+                : '';
+
+            // Build the full formatted context for LLM prompt injection
+            const parts: string[] = [];
+            if (authoritativeContext) {
+                parts.push(`### AUTHORITATIVE SOURCES (trusted — cite directly)\n${authoritativeContext}`);
+            }
+            if (bendingContext) {
+                parts.push(`### SECONDARY SOURCES (⚠️ needs verification — label in your answer)\n${bendingContext}`);
+            }
+            const formattedContext = parts.join('\n\n');
+
+            // Build citation list
+            const seenTitles = new Set<string>();
+            const citations = topChunks
+                .filter(c => { if (seenTitles.has(c.sourceTitle)) return false; seenTitles.add(c.sourceTitle); return true; })
+                .map(c => ({
+                    title: c.sourceTitle,
+                    tier: c.authorityTier,
+                    category: c.sourceCategory,
+                    needsVerification: c.needsVerification,
+                }));
+
+            return { chunks: topChunks, formattedContext, authoritativeContext, bendingContext, citations };
+        } catch (e: any) {
+            console.warn('[KnowledgeBaseManager] querySharedAndCaseKB failed:', e?.message);
+            return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
+        }
+    }
+
+    /**
+     * Infer the authority tier from a file's relative path within kb-shared/.
+     * E.g. 'Authoritative/acts/some-act.pdf' → { tier: 'authoritative', category: 'acts' }
+     */
+    public static inferAuthorityFromPath(relativePath: string): { tier: AuthorityTier; category: SourceCategory } {
+        const lower = relativePath.toLowerCase().replace(/\\/g, '/');
+        let tier: AuthorityTier = 'bending';
+        let category: SourceCategory = 'articles';
+
+        if (lower.startsWith('authoritative/') || lower.startsWith('authoritative\\')) {
+            tier = 'authoritative';
+        } else if (lower.startsWith('bending/') || lower.startsWith('bending\\')) {
+            tier = 'bending';
+        }
+
+        // Infer category from sub-folder
+        const categoryMap: Record<string, SourceCategory> = {
+            'acts': 'acts',
+            'judgements': 'judgements',
+            'amendments': 'amendments',
+            'commentaries': 'commentaries',
+            'articles': 'articles',
+            'news': 'news',
+            'whitepapers': 'whitepapers',
+        };
+        for (const [folder, cat] of Object.entries(categoryMap)) {
+            if (lower.includes(`/${folder}/`) || lower.includes(`\\${folder}\\`) || lower.includes(`/${folder}\\`)) {
+                category = cat;
+                break;
+            }
+        }
+
+        // If the tier is authoritative but category is a bending one, auto-fix
+        // (e.g. someone puts an article in authoritative/ — still authoritative)
+        if (tier === 'authoritative' && !['acts', 'judgements', 'amendments', 'commentaries'].includes(category)) {
+            // Files directly in Authoritative/ without a sub-folder default to 'acts'
+            category = 'acts';
+        }
+
+        return { tier, category };
     }
 }

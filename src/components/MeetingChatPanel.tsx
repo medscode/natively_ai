@@ -87,22 +87,28 @@ const UserMessage: React.FC<{ content: string }> = ({ content }) => (
     </motion.div>
 );
 
-const CitationBadge: React.FC<{ c: Citation }> = ({ c }) => (
-    <span
-        title={c.snippet || c.title}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium ${
-            c.sourceType === 'web'
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                : 'bg-blue-500/10 text-blue-500 border-blue-500/30'
-        }`}
-    >
-        {c.sourceType === 'web' ? <Globe size={10} strokeWidth={2.5} /> : <BookOpen size={10} strokeWidth={2.5} />}
-        <span className="max-w-[140px] truncate">{c.title || c.sourceType}</span>
-        {typeof c.similarity === 'number' && (
-            <span className="opacity-70 font-mono text-[9px]">{c.similarity.toFixed(2)}</span>
-        )}
-    </span>
-);
+const CitationBadge: React.FC<{ c: Citation }> = ({ c }) => {
+    const isNeedsVerification = c.title?.includes('[Needs Verification]') || c.title?.startsWith('⚠️');
+    const isAuthoritative = c.title?.startsWith('📖');
+    return (
+        <span
+            title={c.snippet ? `${c.title}\n\nDocument Excerpt:\n${c.snippet}` : c.title}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-medium transition-colors ${
+                c.sourceType === 'web'
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : isNeedsVerification
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                        : 'bg-indigo-500/15 text-indigo-200 border-indigo-500/40'
+            }`}
+        >
+            {c.sourceType === 'web' ? <Globe size={11} strokeWidth={2.5} /> : <BookOpen size={11} strokeWidth={2.5} />}
+            <span className="max-w-[320px] truncate">{c.title || c.sourceType}</span>
+            {typeof c.similarity === 'number' && (
+                <span className="opacity-60 font-mono text-[9px]">({c.similarity.toFixed(2)})</span>
+            )}
+        </span>
+    );
+};
 
 const AssistantMessage: React.FC<{
     content: string;
@@ -729,7 +735,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 setPendingSuggestion(null);
             }}
         >
-            {isOpen && (console.log('[MeetingChatPanel] rendering, isOpen=true, panelHeight=', panelHeight),
+            {isOpen && (
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -739,22 +745,22 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                     onClick={handleBackdropClick}
                 >
                     <motion.div
-                        initial={{ backdropFilter: 'blur(0px)' }}
-                        animate={{ backdropFilter: 'blur(8px)' }}
-                        exit={{ backdropFilter: 'blur(0px)' }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
                         transition={{ duration: 0.16 }}
-                        className="fixed inset-0 bg-black/40"
+                        className="fixed inset-0 bg-black/10 backdrop-blur-[2px]"
                     />
 
                     <motion.div
                         initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: '85vh', opacity: 1 }}
+                        animate={{ height: panelHeight || '85vh', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         transition={{
                             height: { type: "spring", stiffness: 300, damping: 30, mass: 0.8 },
                             opacity: { duration: 0.2 }
                         }}
-                        className="mx-auto w-full max-w-[680px] mb-0 bg-[#1f1f23] backdrop-blur-xl rounded-t-[24px] border-t border-x border-white/20 shadow-2xl overflow-hidden flex flex-col pointer-events-auto"
+                        className="mx-auto w-full max-w-[720px] mb-0 bg-black/40 backdrop-blur-2xl rounded-t-[24px] border-t border-x border-white/15 shadow-[0_-12px_40px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Drag-to-resize handle */}
@@ -783,7 +789,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                             <div className="w-12 h-1.5 rounded-full bg-white/30 hover:bg-white/50 transition-colors" />
                         </div>
                         {/* Header */}
-                        <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle shrink-0">
+                        <div className="flex items-center justify-between px-5 py-2.5 border-b border-white/10 bg-transparent shrink-0">
                             <div className="flex items-center gap-2 text-white">
                                 <Sparkles size={14} className="opacity-80 text-indigo-300" />
                                 <span className="text-[13px] font-medium text-white">Meeting Copilot</span>
@@ -793,27 +799,21 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                             </button>
                         </div>
 
-                        {/* Messages area */}
-                        <div className="flex-1 overflow-y-auto px-6 py-4 pb-40 custom-scrollbar">
+                        {/* Messages & Suggestions Area (flex-1 min-h-0 ensures it ends strictly above the bottom footer) */}
+                        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 custom-scrollbar">
                             {messages.length === 0 && (
-                                <div className="text-center text-white/70 py-12">
-                                    <Sparkles size={32} className="mx-auto mb-3 opacity-50 text-indigo-300" />
-                                    <p className="text-sm text-white/90">Ask anything — your active knowledge base has the answers.</p>
+                                <div className="text-center text-white/70 py-8">
+                                    <Sparkles size={28} className="mx-auto mb-2.5 opacity-50 text-indigo-300" />
+                                    <p className="text-sm text-white/90">Ask anything — your legal knowledge base has the answers.</p>
                                     {activeCase.clientCaseId ? (
-                                        <p className="text-xs mt-2 text-white/60">Grounded in: <span className="font-medium text-indigo-200">{activeCase.clientCaseName}</span></p>
+                                        <p className="text-xs mt-1.5 text-white/60">Grounded in: <span className="font-medium text-indigo-200">{activeCase.clientCaseName}</span></p>
                                     ) : (
-                                        <p className="text-xs mt-2 text-white/60">No active case — open <span className="font-medium text-white">+</span> below to pick one.</p>
+                                        <p className="text-xs mt-1.5 text-white/60">Shared Legal Knowledge Base active.</p>
                                     )}
                                 </div>
                             )}
-                            {/* Proactive Suggestion History (4-stage progressive, append-only).
-                                Each STT-final trigger creates a NEW card that streams in,
-                                then persists in the list. Old cards stay visible above chat
-                                messages; the panel scrolls to show them. Click a card to
-                                fill the input box AND remove that card from history. Capped
-                                at MAX_SUGGESTIONS (oldest dropped first). Auto-scrolls to
-                                the newest entry. */}
-                            <div ref={suggestionsEndRef} className="mb-3 space-y-2">
+                            {/* Proactive Suggestion History */}
+                            <div ref={suggestionsEndRef} className="mb-3 space-y-2.5">
                                 <AnimatePresence initial={false}>
                                     {proactiveSuggestions.map((s) => {
                                         const hasText = s.suggestion && s.suggestion.length > 0;
@@ -825,16 +825,21 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                 initial={{ opacity: 0, y: 6 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 transition={{ duration: 0.22, ease: 'easeOut' }}
-                                                className="group relative pl-3 pr-9 py-2 rounded-lg border-l-2 border-indigo-500/60 bg-white/[0.02] text-[13px] text-white/90 leading-relaxed hover:bg-white/[0.04] transition-colors cursor-pointer"
+                                                className="group relative pl-3.5 pr-9 py-2.5 rounded-xl border-l-2 border-indigo-400/80 bg-white/[0.04] backdrop-blur-md text-[13px] text-white/95 leading-relaxed hover:bg-white/[0.07] transition-all cursor-pointer shadow-sm"
                                                 onClick={() => {
-                                                    // Phase P: click fills input but does NOT remove the
-                                                    // bubble. Cards persist across the meeting and across
-                                                    // app restarts (replayed from SQLite via getSuggestions).
                                                     if (hasText) setQuery(s.suggestion);
                                                 }}
                                                 title="Click to insert into the prompt box"
                                             >
-                                                {/* Streaming caret — only on the actively-streaming card */}
+                                                {/* Triggering transcript question header */}
+                                                {s.question && (
+                                                    <div className="text-[11px] font-semibold text-indigo-300/90 mb-1 flex items-center gap-1.5 truncate" title={`Triggered by: "${s.question}"`}>
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                                                        <span className="truncate">Triggered by: &ldquo;{s.question}&rdquo;</span>
+                                                    </div>
+                                                )}
+
+                                                {/* Streaming caret */}
                                                 {hasText ? (
                                                     <div className="whitespace-pre-wrap break-words">
                                                         {s.suggestion}
@@ -844,18 +849,18 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                     <div className="text-white/50 italic">Generating…</div>
                                                 ) : null}
 
-                                                {/* Citations — small chip-style badges below the bubble */}
+                                                {/* Citations — badges below the bubble */}
                                                 {s.citations && s.citations.length > 0 && (
-                                                    <div className="mt-1.5 flex flex-wrap gap-1">
+                                                    <div className="mt-2 flex flex-wrap gap-1.5">
                                                         {s.citations.map(c => <CitationBadge key={c.id} c={c} />)}
                                                     </div>
                                                 )}
 
-                                                {/* Copy button — slides in on hover, top-right */}
+                                                {/* Copy button */}
                                                 {hasText && (
                                                     <button
                                                         type="button"
-                                                        className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10 text-white/60 hover:text-white"
+                                                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10 text-white/60 hover:text-white"
                                                         title="Copy to clipboard"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
@@ -864,13 +869,13 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                             } catch { /* ignore */ }
                                                         }}
                                                     >
-                                                        <Copy size={11} />
+                                                        <Copy size={12} />
                                                     </button>
                                                 )}
 
-                                                {/* Streaming indicator dots — top-left, only when actively streaming */}
+                                                {/* Streaming indicator dots */}
                                                 {isStreaming && (
-                                                    <span className="absolute top-1.5 left-1.5 flex gap-0.5" aria-label="streaming">
+                                                    <span className="absolute top-2 left-2 flex gap-0.5" aria-label="streaming">
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '0ms' }} />
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '120ms' }} />
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '240ms' }} />
@@ -899,18 +904,17 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                             <div ref={messagesEndRef} />
                         </div>
 
-                        {/* Floating Footer */}
-                        <div className="absolute bottom-0 left-0 right-0 p-6 flex justify-center z-50 pointer-events-none">
-                            <div className="w-full max-w-[440px] relative group pointer-events-auto">
+                        {/* Bottom Docked Section — seamlessly transparent, strictly beneath suggestions */}
+                        <div className="shrink-0 w-full px-5 pt-2.5 pb-4 border-t border-white/10 bg-transparent flex flex-col items-center z-20">
+                            <div className="w-full max-w-[540px] relative group">
 
-                                {/* Live transcript strip — last few segments from the
-                                    rolling transcript. Hidden when the toggle is off. */}
+                                {/* Live transcript strip — strictly inside the bottom dock */}
                                 {liveTranscriptEnabled && liveSegments.length > 0 && (
                                     <motion.div
                                         initial={{ opacity: 0, y: 4 }}
                                         animate={{ opacity: 1, y: 0 }}
                                         transition={{ duration: 0.18 }}
-                                        className="mb-2 px-2.5 py-2 rounded-xl bg-white/[0.03] border border-white/10 text-[12px] text-white/80 max-h-24 overflow-y-auto custom-scrollbar"
+                                        className="w-full mb-2.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/10 text-[12px] text-white/90 max-h-24 overflow-y-auto custom-scrollbar backdrop-blur-md shadow-sm"
                                     >
                                         <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-white/50 mb-1">
                                             <span className={`w-1.5 h-1.5 rounded-full ${liveDot ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/60'}`} />
@@ -930,7 +934,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     </motion.div>
                                 )}
 
-                                {/* KB indicator row */}
+                                {/* KB indicator & controls row */}
                                 <div className="flex items-center gap-2 mb-2 px-1">
                                     {activeCase.clientCaseId ? (
                                         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-[11px]">
@@ -940,7 +944,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         </div>
                                     ) : (
                                         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-[11px] text-white/70">
-                                            <span>No active case</span>
+                                            <span>Shared Legal KB</span>
                                         </div>
                                     )}
 
@@ -1004,7 +1008,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         onChange={(e) => setQuery(e.target.value)}
                                         onKeyDown={handleInputKeyDown}
                                         placeholder={mode === 'suggest' ? 'Ask — or wait for a suggestion above' : 'Ask me anything...'}
-                                        className="w-full pl-12 pr-28 py-3 bg-[#2a2a2e] shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white/15 rounded-full text-sm text-white placeholder-white/40 focus:outline-none focus:border-indigo-500/50 transition-all"
+                                        className="w-full pl-12 pr-28 py-2.5 bg-white/[0.05] border border-white/15 rounded-full text-sm text-white placeholder-white/40 focus:outline-none focus:border-indigo-400/60 backdrop-blur-md transition-all shadow-inner"
                                     />
 
                                     {/* + Action button */}

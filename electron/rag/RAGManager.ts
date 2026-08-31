@@ -287,16 +287,11 @@ export class RAGManager {
             caseId = getActiveClientCase().clientCaseId;
         }
         console.log('[RAGManager.queryKB] caseId=', caseId, 'query=', query);
-        if (!caseId) {
-            yield { type: 'chunk', text: 'No active client case is set. Pick a client case in Settings → Knowledge Base first.' };
-            yield { type: 'done' };
-            return;
-        }
 
-        // Retrieve chunks from the KB
-        const result = await kb.queryKnowledgeBase(caseId, query, { limit: options?.topK ?? 5 });
+        // Retrieve chunks from the shared legal KB + active case
+        const result = await kb.querySharedAndCaseKB(query, caseId, { limit: options?.topK ?? 6 });
         const chunks = (result && (result as any).chunks) || [];
-        console.log('[RAGManager.queryKB] retrieved', chunks.length, 'chunks for case', caseId);
+        console.log('[RAGManager.queryKB] retrieved', chunks.length, 'chunks (shared + case)');
 
         if (chunks.length === 0) {
             // Fall back to web search if enabled
@@ -321,8 +316,8 @@ export class RAGManager {
                         const formattedContext = webResults.map((r, i) =>
                             `[${i + 1} — ${r.title} (${r.url})]\n${r.snippet}`
                         ).join('\n\n');
-                        const prompt = `You are answering a question using web search results.
-Use ONLY the following web snippets to answer. Cite the source URL in your answer.
+                        const prompt = `You are an assistant answering a legal / general question using web search results.
+Use the following web snippets to answer. Cite the source URL in your answer.
 
 Web results:
 ${formattedContext}
@@ -348,31 +343,29 @@ Answer (include source URLs):`;
             } catch (e: any) {
                 console.warn('[RAGManager] KB→web fallback failed:', e?.message);
             }
-            yield { type: 'chunk', text: `I don't have information on this in the knowledge base. Try uploading a document or enabling web search in Settings.` };
+            yield { type: 'chunk', text: `I don't have information on this in the legal knowledge base. Try uploading a relevant document or enabling web search in Settings.` };
             yield { type: 'done' };
             return;
         }
 
         // Yield citations up-front so the renderer can render badges
         const citations = chunks.map((c: any, idx: number) => ({
-            id: c.id ?? `chunk-${idx}`,
-            sourceType: c.sourceType ?? 'file',
-            title: c.title ?? 'Knowledge Source',
-            similarity: c.score,
-            snippet: (c.text || '').slice(0, 240),
+            id: c.id != null ? String(c.id) : `chunk-${idx}`,
+            sourceType: c.sourceCategory ?? 'file',
+            title: c.needsVerification
+                ? `⚠️ ${c.sourceTitle} [Needs Verification]`
+                : `📖 ${c.sourceTitle}`,
+            similarity: c.authorityScore,
+            snippet: (c.text || '').slice(0, 250),
         }));
         yield { type: 'citations', citations };
 
         // Build prompt with retrieved context
-        const formattedContext = chunks.map((c: any, idx: number) =>
-            `[Chunk ${idx + 1}${c.title ? ` — ${c.title}` : ''}]\n${c.text || ''}`
+        const formattedContext = (result && (result as any).formattedContext) || chunks.map((c: any, idx: number) =>
+            `[${idx + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
         ).join('\n\n');
 
-        // Optional live transcript block — when an IntelligenceManager ref is
-        // wired AND the renderer hasn't disabled injection, pull the last 120s
-        // of conversation so the Copilot answer can reference what was just said.
-        // Capped at 1200 chars. Wrapped in try/catch so a missing/faulty IM
-        // never breaks the KB-grounded path.
+        // Optional live transcript block
         let liveBlock = '';
         if (this.liveTranscriptInjectionEnabled && this.intelligenceManager) {
             try {
@@ -382,20 +375,27 @@ Answer (include source URLs):`;
                     .join(' ')
                     .slice(0, 1200);
                 if (t) {
-                    liveBlock = `\n\n<live_transcript note="most recent spoken context, may be partial">\n${t}\n</live_transcript>`;
+                    liveBlock = `\n\n<live_transcript note="most recent spoken context">\n${t}\n</live_transcript>`;
                 }
             } catch (_err) {
-                // non-fatal — KB answer proceeds without live context
+                // non-fatal
             }
         }
 
-        const prompt = `You are an assistant answering questions about a specific client's knowledge base.
-Use ONLY the following context to answer. If the context does not contain the answer, say so explicitly — do not invent.
+        const prompt = `You are an expert legal co-counsel assisting a lawyer with knowledge base retrieval.
+Use the following retrieved context from the legal knowledge base to answer the question thoroughly.
 
-Context:
+Retrieved Legal Knowledge:
 ${formattedContext}${liveBlock}
 
-Question: ${query}
+QUESTION:
+${query}
+
+STRUCTURE YOUR ANSWER IN THIS EXACT FORMAT:
+1. DIRECT ANSWER (BOTTOM LINE): Start with a clear 1-2 sentence direct answer that immediately answers the user's question.
+2. KEY POINTS & DETAILED EXPLANATION: Provide clear, structured bullet points explaining the legal mechanics, prerequisites, exceptions, or analysis.
+3. CITATION CONVENTION: Use the Indian legal notation format: write "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 8 of the Hindu Succession Act, 1956", "Order XXXIX Rule 1 of CPC, 1908"). NEVER use the "§" symbol.
+4. EXACT SOURCE CITATIONS: Name the exact Act, statute, or document title for every cited provision. If citing a secondary source (⚠️), note that it requires verification.
 
 Answer:`;
 

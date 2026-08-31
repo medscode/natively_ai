@@ -34,9 +34,6 @@ export async function runKbSuggest(
     const { getActiveClientCase } = await import('./suggest/KnowledgeBaseGate');
     const { KnowledgeBaseManager } = await import('./KnowledgeBaseManager');
     const active = getActiveClientCase();
-    if (!active.clientCaseId) {
-        return { success: false, error: 'no_active_client_case', question };
-    }
 
     const kb = KnowledgeBaseManager.getInstance();
     const ragManager = appState.getRAGManager();
@@ -46,45 +43,58 @@ export async function runKbSuggest(
         if (vs && ep) kb.setPipeline(vs, ep);
     }
 
-    const result = await kb.queryKnowledgeBase(active.clientCaseId, question, { limit: 4 });
-    const chunks = (result && (result as any).chunks) || [];
-    const citations = chunks.map((c: any, idx: number) => ({
-        id: c.id ?? `chunk-${idx}`,
-        sourceType: c.sourceType ?? 'file',
-        title: c.title ?? 'Knowledge Source',
-        similarity: c.score,
-        snippet: (c.text || '').slice(0, 200),
+    // Use authority-aware query that searches shared KB + active case
+    const result = await kb.querySharedAndCaseKB(question, active.clientCaseId, { limit: 4 });
+    const chunks = result?.chunks || [];
+    const citations = chunks.map((c, idx: number) => ({
+        id: c.id != null ? String(c.id) : `chunk-${idx}`,
+        sourceType: c.sourceCategory ?? 'file',
+        title: c.needsVerification
+            ? `⚠️ ${c.sourceTitle} [Needs Verification]`
+            : `📖 ${c.sourceTitle}`,
+        similarity: c.authorityScore,
+        snippet: (c.text || '').slice(0, 250),
     }));
 
     if (chunks.length === 0) {
         return { success: false, error: 'no_relevant_chunks', question };
     }
 
-    // Build a short suggestion prompt
-    const ctxBlock = chunks.map((c: any, i: number) =>
-        `[${i + 1}${c.title ? ` — ${c.title}` : ''}] ${c.text || ''}`
+    // Build suggestion prompt with authority-labeled context and strict Indian legal formatting
+    const ctxBlock = result.formattedContext || chunks.map((c, i: number) =>
+        `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
     ).join('\n\n');
-    const prompt = `You are coaching a user during a live conversation. The user just heard/asked:
 
+    const prompt = `You are an expert legal co-counsel coaching a lawyer during a live client meeting.
+The client just said / asked:
 "${question}"
 
-${transcriptContext ? `Recent transcript:\n${transcriptContext.slice(0, 800)}\n\n` : ''}Reference context from the active client's knowledge base:
+${transcriptContext ? `Recent conversation transcript:\n${transcriptContext.slice(0, 800)}\n\n` : ''}Retrieved Knowledge Base Context:
 ${ctxBlock}
 
-Write a SHORT (1-3 sentence) suggested follow-up the user could say next, grounded in the reference context. Be direct, conversational, and natural. Do not include citations, footnotes, or preamble — just the words they could say.`;
+STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
+1. DIRECT ANSWER (BOTTOM LINE): Provide a direct, clear 1-2 sentence answer that the lawyer can speak immediately to address the client's question. No preamble (do NOT say "Here is what to say" or "As a lawyer...").
+2. KEY POINTS & STATUTORY BASIS: Follow with 2-3 concise bullet points with legal reasoning, conditions, exceptions, or procedural steps.
+3. CITATION CONVENTION: Use the Indian legal notation format: use "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 6 of the Hindu Succession Act, 1956", "Order XXXIX of CPC, 1908"). NEVER use the "§" symbol.
+4. EXACT DOCUMENT CITATION: Explicitly name the document/Act from which the rule is drawn. If relying on secondary sources (⚠️), note that it requires verification.`;
 
     const llmHelper = appState.processingHelper.getLLMHelper();
-    const suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
+    let suggestion = '';
+    try {
+        suggestion = await llmHelper.chatWithGemini(prompt, undefined, undefined, true);
+    } catch (e) {
+        suggestion = await llmHelper.generateSuggestion(transcriptContext || ctxBlock, question);
+    }
 
     // Send to all renderer windows so MeetingChatPanel picks it up via its
-    // own onSuggestion listener (the legacy SuggestionOverlay has been removed).
+    // own onSuggestion listener
     const { BrowserWindow } = await import('electron');
     BrowserWindow.getAllWindows().forEach((win: any) => {
         if (!win.isDestroyed()) {
             win.webContents.send('suggestion-generated', {
                 question,
                 suggestion,
-                confidence: 0.8,
+                confidence: 0.85,
                 citations,
             });
         }

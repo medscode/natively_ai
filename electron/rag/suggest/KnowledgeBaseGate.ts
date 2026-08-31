@@ -1,8 +1,8 @@
 // electron/rag/suggest/KnowledgeBaseGate.ts
 // Module-scoped active client case for KB-grounded chat and context injection.
 // Persists across Electron restarts via SettingsManager (key: `activeClientCaseId`).
+// Extended (2026-08): also queries shared legal KB with authority-weighted scoring.
 
-import { KnowledgeBaseManager } from '../KnowledgeBaseManager';
 import { SettingsManager } from '../../services/SettingsManager';
 
 let _activeClientCaseId: string | null = null;
@@ -85,31 +85,49 @@ export function getActiveClientCase(): {
 
 /**
  * Query the knowledge base for the active client case and return formatted context.
+ * Extended (2026-08): also queries the shared legal KB with authority-weighted scoring.
  */
 export async function injectKBContext(question: string): Promise<KBInjectedContext> {
-    if (!_activeClientCaseId) {
-        return { contextBlock: '', citations: [], kbUsed: false };
-    }
+    // Even without an active case, we should still search the shared KB.
+    const activeCase = getActiveClientCase();
 
     try {
+        const { KnowledgeBaseManager, SHARED_KB_CASE_ID } = await import('../KnowledgeBaseManager');
         const kb = KnowledgeBaseManager.getInstance();
-        const res = await kb.queryKnowledgeBase(_activeClientCaseId, question, { limit: 5 });
+
+        // Use the authority-aware query that searches both shared KB + active case
+        const res = await kb.querySharedAndCaseKB(
+            question,
+            activeCase.clientCaseId, // null if no active case — shared KB still searched
+            { limit: 6 }
+        );
+
         if (!res || !res.chunks || res.chunks.length === 0) {
             return { contextBlock: '', citations: [], kbUsed: false };
         }
 
+        // Build the XML context block with authority tier labels
+        const caseLabel = activeCase.clientCaseId
+            ? ` for the client case "${_activeClientCaseName}" (${_activeClientCaseCompany})`
+            : '';
         const xml = `<knowledge_base_context>
-The following background reference chunks are retrieved from the knowledge base of the client case "${_activeClientCaseName}" (${_activeClientCaseCompany}) for context:
+The following reference material is retrieved from the legal knowledge base${caseLabel}.
+IMPORTANT: Authoritative sources (Acts, Judgements, Amendments, Commentaries) are trusted — cite them directly.
+Secondary sources are informational only — always label them with "⚠️ Needs verification" when citing.
+When authoritative and secondary sources conflict, ALWAYS follow the authoritative source.
+Always mention which Act/Section/Judgement the answer is based on.
 
 ${res.formattedContext}
 </knowledge_base_context>`;
 
-        const citations: SuggestionCitation[] = res.chunks.map((c: any) => ({
-            sourceType: c.sourceType || 'file',
-            title: c.title || 'Knowledge Source',
-            chunkId: c.id,
-            similarity: c.score,
-            snippet: c.text,
+        const citations: SuggestionCitation[] = res.chunks.map((c) => ({
+            sourceType: c.sourceCategory || 'file',
+            title: c.needsVerification
+                ? `⚠️ ${c.sourceTitle} [Needs Verification]`
+                : `📖 ${c.sourceTitle}`,
+            chunkId: String(c.id),
+            similarity: c.authorityScore,
+            snippet: c.text?.slice(0, 200),
         }));
 
         return {

@@ -172,16 +172,13 @@ export class SuggestionPipeline {
         }
 
         // Retrieval with a soft deadline.
-        // Lawyer mode: precision over recall. Top-2 chunks at 0.5 similarity
-        // instead of the default top-4 at 0.35 — keeps the LLM focused on the
-        // most relevant precedent/case-file chunk, avoids flooding the
-        // pointer set with peripheral facts that would distract the lawyer.
+        // Use authority-aware retrieval across shared legal KB and active case
         const retrievalOpts = input.templateType === 'lawyer'
-            ? { limit: 2, minSimilarity: 0.5 }
+            ? { limit: 4, minSimilarity: 0.35 }
             : { limit: 4, minSimilarity: 0.35 };
-        const retrievalPromise = kb.queryKnowledgeBase(
-            active.clientCaseId,
+        const retrievalPromise = kb.querySharedAndCaseKB(
             input.question,
+            active.clientCaseId,
             retrievalOpts,
         );
         const retrievalResult = await Promise.race([
@@ -192,36 +189,39 @@ export class SuggestionPipeline {
 
         const chunks = (retrievalResult && (retrievalResult as any).chunks) || [];
         const citations = chunks.map((c: any, idx: number) => ({
-            id: c.id ?? `chunk-${idx}`,
-            sourceType: c.sourceType ?? 'file',
-            title: c.title ?? 'Knowledge Source',
-            similarity: c.score,
-            snippet: (c.text || '').slice(0, 200),
+            id: c.id != null ? String(c.id) : `chunk-${idx}`,
+            sourceType: c.sourceCategory ?? 'file',
+            title: c.needsVerification
+                ? `⚠️ ${c.sourceTitle} [Needs Verification]`
+                : `📖 ${c.sourceTitle}`,
+            similarity: c.authorityScore,
+            snippet: (c.text || '').slice(0, 250),
         }));
 
         if (chunks.length === 0) {
             // No KB context — still emit a suggestion, but with NO chunks fed to
-            // the prompt (so the LLM doesn't hallucinate a citation). The user
-            // sees a generic answer instead of silence. This is intentionally
-            // permissive for testing; production deployments should gate on
-            // chunks.length > 0 once KBs are populated.
+            // the prompt (so the LLM doesn't hallucinate a citation).
             console.log(`[SuggestionPipeline] NO CHUNKS for q="${input.question.slice(0, 40)}…" — emitting generic suggestion`);
             this.emit(appState, { kind: 'done', revision, question: input.question, text: '', citations: [] });
-            // Don't return — fall through to the LLM call below with empty ctxBlock.
         }
 
-        // Build the prompt (matches existing kbSuggest.ts:64-74 shape, kept for parity).
-        const ctxBlock = chunks.map((c: any, i: number) =>
-            `[${i + 1}${c.title ? ` — ${c.title}` : ''}] ${c.text || ''}`
+        // Build the prompt with authority-labeled context and strict Indian legal notation
+        const ctxBlock = (retrievalResult && (retrievalResult as any).formattedContext) || chunks.map((c: any, i: number) =>
+            `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
         ).join('\n\n');
-        const prompt = `You are coaching a user during a live conversation. The user just heard/asked:
 
+        const prompt = `You are an expert legal co-counsel coaching a lawyer during a live client meeting.
+The client just said / asked:
 "${input.question}"
 
-${input.transcriptContext ? `Recent transcript:\n${input.transcriptContext.slice(0, 800)}\n\n` : ''}Reference context from the active client's knowledge base:
+${input.transcriptContext ? `Recent conversation transcript:\n${input.transcriptContext.slice(0, 800)}\n\n` : ''}Retrieved Knowledge Base Context:
 ${ctxBlock}
 
-Write a SHORT (1-3 sentence) suggested follow-up the user could say next, grounded in the reference context. Be direct, conversational, and natural. Do not include citations, footnotes, or preamble — just the words they could say.`;
+STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
+1. DIRECT ANSWER (BOTTOM LINE): Provide a direct, clear 1-2 sentence answer that the lawyer can speak immediately to address the client's question. No preamble (do NOT say "Here is what to say" or "As a lawyer...").
+2. KEY POINTS & STATUTORY BASIS: Follow with 2-3 concise bullet points with legal reasoning, conditions, exceptions, or procedural steps.
+3. CITATION CONVENTION: Use the Indian legal notation format: use "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 6 of the Hindu Succession Act, 1956", "Order XXXIX of CPC, 1908"). NEVER use the "§" symbol.
+4. EXACT DOCUMENT CITATION: Explicitly name the document/Act from which the rule is drawn. If relying on secondary sources (⚠️), note that it requires verification.`;
 
         // Stream the LLM. Falls through to LLMHelper's existing streaming path
         // (which itself uses Gemini 2.0 Flash with prompt caching via cachedContent).

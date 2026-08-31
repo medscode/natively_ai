@@ -92,19 +92,28 @@ const AssistantMessage: React.FC<{
                 {content}
                 {citations && citations.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                        {citations.map((c) => (
-                            <span
-                                key={c.id}
-                                title={c.snippet || c.title}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium bg-blue-500/10 text-blue-500 border-blue-500/30"
-                            >
-                                <BookOpen size={10} strokeWidth={2.5} />
-                                <span className="max-w-[140px] truncate">{c.title || c.sourceType}</span>
-                                {typeof c.similarity === 'number' && (
-                                    <span className="opacity-70 font-mono text-[9px]">{c.similarity.toFixed(2)}</span>
-                                )}
-                            </span>
-                        ))}
+                        {citations.map((c) => {
+                            const isNeedsVerification = c.title?.includes('[Needs Verification]') || c.title?.startsWith('⚠️');
+                            return (
+                                <span
+                                    key={c.id}
+                                    title={c.snippet ? `${c.title}\n\nDocument Excerpt:\n${c.snippet}` : c.title}
+                                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-medium ${
+                                        c.sourceType === 'web'
+                                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                            : isNeedsVerification
+                                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                                                : 'bg-indigo-500/15 text-indigo-200 border-indigo-500/40'
+                                    }`}
+                                >
+                                    {c.sourceType === 'web' ? <Globe size={11} strokeWidth={2.5} /> : <BookOpen size={11} strokeWidth={2.5} />}
+                                    <span className="max-w-[320px] truncate">{c.title || c.sourceType}</span>
+                                    {typeof c.similarity === 'number' && (
+                                        <span className="opacity-60 font-mono text-[9px]">({c.similarity.toFixed(2)})</span>
+                                    )}
+                                </span>
+                            );
+                        })}
                     </div>
                 )}
                 {isStreaming && (
