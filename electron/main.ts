@@ -2121,6 +2121,9 @@ export class AppState {
             this.ragManager.getEmbeddingPipeline()
           );
           console.log('[AppState] KnowledgeBaseManager pipeline initialized');
+          KnowledgeBaseManager.getInstance().autoSyncSharedLegalKB().catch((syncErr) => {
+            console.warn('[AppState] Shared Legal KB background auto-sync note:', syncErr?.message);
+          });
         } catch (e) {
           console.error('[AppState] Failed to initialize KnowledgeBaseManager:', e);
         }
@@ -7014,6 +7017,18 @@ export class AppState {
 
 async function initializeApp() {
   logStartupPhase('initializeApp:start');
+
+  // 0. Pin the app name BEFORE anything calls app.getPath('userData').
+  // In dev mode the Electron binary name is "Electron", so without this call
+  // `app.getPath('userData')` resolves to ~/Library/Application Support/Electron/
+  // (where this app writes 1 stray meeting instead of reading the 115 meetings
+  // stored in ~/Library/Application Support/natively/). The packaged build
+  // masks this because electron-builder injects the productName into the binary
+  // before launch; dev mode does not. Must run before requestSingleInstanceLock
+  // and before any DatabaseManager.getInstance() call (which itself calls
+  // app.getPath('userData') in its constructor).
+  app.setName('natively');
+
   // 1. Enforce single instance — prevent duplicate dock icons from leftover processes.
   // In development mode with hot-reload this is still safe because electron is restarted
   // by the build step, not re-launched by concurrently while the old process is alive.

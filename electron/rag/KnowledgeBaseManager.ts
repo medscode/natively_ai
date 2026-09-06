@@ -170,6 +170,18 @@ export class KnowledgeBaseManager {
 
     // ── Source Management ─────────────────────────────────────────────
 
+    /**
+     * Resolve the dedicated on-disk storage directory for a client case's uploaded documents.
+     * Stored at: ~/Library/Application Support/natively/storage/cases/<caseId>/documents/
+     */
+    public static getCaseStorageDir(caseId: string): string {
+        const dbm = DatabaseManager.getInstance();
+        const userDataPath = dbm.getUserDataPath();
+        const dir = path.join(userDataPath, 'storage', 'cases', caseId, 'documents');
+        fs.mkdirSync(dir, { recursive: true });
+        return dir;
+    }
+
     public async addSource(params: {
         clientCaseId: string;
         sourceType: 'file' | 'web_page' | 'ppt' | 'youtube';
@@ -197,6 +209,24 @@ export class KnowledgeBaseManager {
                 .run(params.clientCaseId, existing.name || 'Client Case', new Date().toISOString());
         }
 
+        let workingFilePath = params.sourcePath;
+        // Copy lawyer-uploaded case attachments to the managed case storage directory
+        if (params.sourceType === 'file' && params.sourcePath && params.clientCaseId !== SHARED_KB_CASE_ID) {
+            try {
+                const caseDir = KnowledgeBaseManager.getCaseStorageDir(params.clientCaseId);
+                const baseName = path.basename(params.sourcePath);
+                const sanitizedName = baseName.replace(/[^\w\d._-]/g, '_');
+                const managedPath = path.join(caseDir, `${Date.now()}_${sanitizedName}`);
+                if (path.resolve(params.sourcePath) !== path.resolve(managedPath)) {
+                    fs.copyFileSync(params.sourcePath, managedPath);
+                    workingFilePath = managedPath;
+                    console.log(`[KnowledgeBaseManager] Copied case attachment to managed storage: ${managedPath}`);
+                }
+            } catch (copyErr: any) {
+                console.warn('[KnowledgeBaseManager] Failed to copy file to case directory, using original:', copyErr?.message);
+            }
+        }
+
         let extractedText: string;
         let resolvedTitle: string;
         let metadata: Record<string, any> = {};
@@ -204,14 +234,14 @@ export class KnowledgeBaseManager {
         try {
             if (params.content) {
                 extractedText = params.content;
-                resolvedTitle = params.title || path.basename(params.sourcePath || 'unknown');
-                metadata = { filePath: params.sourcePath };
-            } else if (params.sourceType === 'file' && params.sourcePath) {
+                resolvedTitle = params.title || path.basename(workingFilePath || 'unknown');
+                metadata = { filePath: workingFilePath };
+            } else if (params.sourceType === 'file' && workingFilePath) {
                 const { extractSafeDocumentText } = require('../services/SafeDocumentTextExtractor');
-                const safeRes = await extractSafeDocumentText(params.sourcePath);
+                const safeRes = await extractSafeDocumentText(workingFilePath);
                 extractedText = safeRes.content;
                 resolvedTitle = params.title || safeRes.fileName;
-                metadata = { filePath: params.sourcePath, fileSize: safeRes.content.length, pageCount: safeRes.pageCount };
+                metadata = { filePath: workingFilePath, originalPath: params.sourcePath, fileSize: safeRes.content.length, pageCount: safeRes.pageCount };
             } else if (params.sourceType === 'web_page' && params.sourcePath) {
                 // Lazy import: extractors/ is a sibling module that's safe to load
                 // on demand. Static top-level import here would force this code path
@@ -417,12 +447,37 @@ export class KnowledgeBaseManager {
             const spaceKey = this.embeddingPipeline.getActiveSpaceKey();
 
             // Search shared KB
-            const sharedResults = await this.vectorStore.searchSimilar(embedding, {
+            let sharedResults = await this.vectorStore.searchSimilar(embedding, {
                 meetingId: SHARED_KB_CASE_ID,
                 limit: limit * 2, // over-fetch for authority reranking
                 minSimilarity,
                 spaceKey,
             });
+
+            // Resilience fallback: if primary space returned 0 chunks from shared KB,
+            // query using the local 384d MiniLM vector space (where the pre-indexed legal statutes live)
+            if (sharedResults.length === 0) {
+                try {
+                    const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
+                    const localProvider = new LocalEmbeddingProvider();
+                    const localQueryEmbed = await localProvider.embedQuery(query);
+                    if (localQueryEmbed && localQueryEmbed.length === 384) {
+                        const localSpaceKey = localProvider.space;
+                        const fallbackSharedResults = await this.vectorStore.searchSimilar(localQueryEmbed, {
+                            meetingId: SHARED_KB_CASE_ID,
+                            limit: limit * 2,
+                            minSimilarity: Math.min(minSimilarity, 0.25),
+                            spaceKey: localSpaceKey,
+                        });
+                        if (fallbackSharedResults.length > 0) {
+                            console.log(`[KnowledgeBaseManager] Retrieved ${fallbackSharedResults.length} chunks from local 384d shared KB space`);
+                            sharedResults = fallbackSharedResults;
+                        }
+                    }
+                } catch (fallbackErr: any) {
+                    console.warn('[KnowledgeBaseManager] Local 384d fallback search note:', fallbackErr?.message);
+                }
+            }
 
             // Search active case (if any and different from shared)
             let caseResults: any[] = [];
@@ -433,6 +488,26 @@ export class KnowledgeBaseManager {
                     minSimilarity,
                     spaceKey,
                 });
+
+                if (caseResults.length === 0) {
+                    try {
+                        const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
+                        const localProvider = new LocalEmbeddingProvider();
+                        const localQueryEmbed = await localProvider.embedQuery(query);
+                        if (localQueryEmbed && localQueryEmbed.length === 384) {
+                            const localSpaceKey = localProvider.space;
+                            const fallbackCase = await this.vectorStore.searchSimilar(localQueryEmbed, {
+                                meetingId: activeCaseId,
+                                limit,
+                                minSimilarity: Math.min(minSimilarity, 0.25),
+                                spaceKey: localSpaceKey,
+                            });
+                            if (fallbackCase.length > 0) {
+                                caseResults = fallbackCase;
+                            }
+                        }
+                    } catch (_) {}
+                }
             }
 
             // Look up source metadata for authority tier resolution
@@ -628,5 +703,150 @@ export class KnowledgeBaseManager {
         }
 
         return { tier, category };
+    }
+
+    /**
+     * Resolve the on-disk directory for the shared legal KB (supports both 'KB-shared' and 'kb-shared').
+     * Checks packaged app resources as well as development source directories.
+     */
+    public static resolveSharedKBDir(): string | null {
+        const candidates: string[] = [
+            path.join(process.resourcesPath, 'KB-shared'),
+            path.join(process.resourcesPath, 'kb-shared'),
+        ];
+        try {
+            const { app } = require('electron');
+            if (app && typeof app.getAppPath === 'function') {
+                const appPath = app.getAppPath();
+                candidates.push(path.join(appPath, 'KB-shared'));
+                candidates.push(path.join(appPath, 'kb-shared'));
+                candidates.push(path.join(appPath, '..', 'KB-shared'));
+                candidates.push(path.join(appPath, '..', 'kb-shared'));
+                candidates.push(path.join(appPath, '..', '..', 'KB-shared'));
+                candidates.push(path.join(appPath, '..', '..', 'kb-shared'));
+            }
+        } catch (_) {}
+        candidates.push(path.join(process.cwd(), 'KB-shared'));
+        candidates.push(path.join(process.cwd(), 'kb-shared'));
+
+        for (const c of candidates) {
+            try {
+                if (fs.existsSync(c) && fs.statSync(c).isDirectory()) {
+                    return c;
+                }
+            } catch (_) {}
+        }
+        return null;
+    }
+
+    /**
+     * Automated startup synchronization for the Shared Legal KB.
+     * Checks if the sentinel case exists and if all files in KB-shared/ are ingested.
+     * Uses on-device MiniLM (384d) for 100% offline, zero-cloud-quota indexing.
+     */
+    public async autoSyncSharedLegalKB(): Promise<{ synced: number; skipped: number; total: number }> {
+        const kbDir = KnowledgeBaseManager.resolveSharedKBDir();
+        if (!kbDir) {
+            console.log('[KnowledgeBaseManager] No KB-shared directory found, skipping auto-sync.');
+            return { synced: 0, skipped: 0, total: 0 };
+        }
+
+        const db = DatabaseManager.getInstance().getDb();
+        if (!db) {
+            console.warn('[KnowledgeBaseManager] DB not ready for Shared Legal KB sync.');
+            return { synced: 0, skipped: 0, total: 0 };
+        }
+
+        // Ensure sentinel case and meeting exist with local 384d space stamp
+        this.createClientCase({
+            id: SHARED_KB_CASE_ID,
+            name: 'Shared Legal Knowledge Base',
+            company: 'Global Indian Law Library',
+            notes: 'Authoritative Indian Statutes, Acts, Codes, and Persuasive Legal Commentary',
+        });
+        db.prepare(`INSERT OR IGNORE INTO meetings (id, title, created_at, source, embedding_space) VALUES (?, ?, ?, 'kb_client_case', ?)`).run(
+            SHARED_KB_CASE_ID,
+            'Shared Legal Knowledge Base',
+            new Date().toISOString(),
+            'local:xenova/all-minilm-l6-v2:384'
+        );
+
+        // Scan supported documents in Authoritative and bending
+        const files: Array<{ fullPath: string; relativePath: string; fileName: string }> = [];
+        const scan = (dir: string, base: string) => {
+            if (!fs.existsSync(dir)) return;
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    scan(full, base);
+                } else if (entry.isFile() && !entry.name.startsWith('.')) {
+                    const ext = path.extname(entry.name).toLowerCase();
+                    if (['.pdf', '.docx', '.txt', '.md', '.markdown', '.json', '.csv'].includes(ext)) {
+                        files.push({
+                            fullPath: full,
+                            relativePath: path.relative(base, full),
+                            fileName: entry.name,
+                        });
+                    }
+                }
+            }
+        };
+        scan(kbDir, kbDir);
+
+        if (files.length === 0) {
+            return { synced: 0, skipped: 0, total: 0 };
+        }
+
+        const existingHashes = new Set<string>();
+        try {
+            const rows = db.prepare(`SELECT metadata_json FROM knowledge_sources WHERE client_case_id = ?`).all(SHARED_KB_CASE_ID) as any[];
+            for (const r of rows) {
+                try {
+                    const meta = JSON.parse(r.metadata_json || '{}');
+                    if (meta.file_hash) existingHashes.add(meta.file_hash);
+                } catch (_) {}
+            }
+        } catch (_) {}
+
+        let synced = 0;
+        let skipped = 0;
+        const crypto = require('crypto');
+
+        for (const file of files) {
+            try {
+                const binary = fs.readFileSync(file.fullPath);
+                const fileHash = crypto.createHash('sha256').update(binary).digest('hex');
+                if (existingHashes.has(fileHash)) {
+                    skipped++;
+                    continue;
+                }
+
+                const { tier, category } = KnowledgeBaseManager.inferAuthorityFromPath(file.relativePath);
+                console.log(`[KnowledgeBaseManager] Auto-syncing legal file: ${file.fileName} [${tier}/${category}]`);
+
+                const title = file.fileName.replace(/\.[^.]+$/, '');
+                await this.addSource({
+                    clientCaseId: SHARED_KB_CASE_ID,
+                    sourceType: 'file',
+                    sourcePath: file.fullPath,
+                    title,
+                    id: `shared_${fileHash.slice(0, 16)}`,
+                    metadata: {
+                        authority_tier: tier,
+                        source_category: category,
+                        file_hash: fileHash,
+                        file_path: file.relativePath,
+                        shared_kb: true,
+                    },
+                });
+                existingHashes.add(fileHash);
+                synced++;
+            } catch (err: any) {
+                console.warn(`[KnowledgeBaseManager] Failed to auto-sync file ${file.fileName}:`, err?.message);
+            }
+        }
+
+        console.log(`[KnowledgeBaseManager] Shared Legal KB auto-sync finished: synced=${synced}, skipped=${skipped}, totalFiles=${files.length}`);
+        return { synced, skipped, total: files.length };
     }
 }

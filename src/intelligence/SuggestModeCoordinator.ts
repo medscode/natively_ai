@@ -21,16 +21,19 @@
 // - New: 0.8-1.7s (event-driven + streaming LLM TTFT)
 
 export interface SuggestionPayload {
+    id?: string;
     suggestion: string;
     citations?: Array<{ id: string; sourceType: string; title: string; similarity?: number; snippet?: string }>;
     source: 'live' | 'mock';
     at: number;
     question?: string;
+    isDone?: boolean;
 }
 
 export interface SuggestionProgressiveEvent {
     kind: 'start' | 'token' | 'citation' | 'done' | 'cancelled' | 'error';
     revision: number;
+    suggestionId?: string;
     question?: string;
     text?: string;
     delta?: string;
@@ -49,6 +52,7 @@ export class SuggestModeCoordinator {
     private currentRevision: number = -1;
     private currentQuestion: string = '';
     private lastSuggestionText: string = '';
+    private currentRevisionStartTime: number = 0;
     private onSuggestion: (s: SuggestionPayload) => void;
     private getMode: () => 'manual' | 'suggest';
     private unsubscribe: (() => void) | null = null;
@@ -96,19 +100,24 @@ export class SuggestModeCoordinator {
                 this.currentRevision = event.revision;
                 this.currentQuestion = event.question || '';
                 this.lastSuggestionText = '';
+                this.currentRevisionStartTime = Date.now();
                 return;
 
             case 'token': {
                 const text = event.text || '';
                 this.lastSuggestionText = text;
+                const id = event.suggestionId || `sugg_${event.revision}`;
                 // Emit a live payload with whatever we've streamed so far.
                 // Consumers can re-render on every token; the SuggestionPayload
                 // is the *latest snapshot*, not a delta.
                 this.onSuggestion({
+                    id,
                     suggestion: text,
                     citations: undefined,
                     source: 'live',
-                    at: Date.now(),
+                    at: this.currentRevisionStartTime || Date.now(),
+                    question: this.currentQuestion || event.question,
+                    isDone: false,
                 });
                 return;
             }
@@ -122,16 +131,19 @@ export class SuggestModeCoordinator {
 
             case 'done': {
                 const text = event.text ?? this.lastSuggestionText;
+                const id = event.suggestionId || `sugg_${event.revision}`;
                 // Phase P: include question (the transcript snippet that triggered
                 // this suggestion) so the Suggestions tab + chat-bubble history
                 // can render it. The renderer previously had no way to know
                 // which transcript line produced each suggestion.
                 this.onSuggestion({
+                    id,
                     suggestion: text,
                     citations: event.citations,
                     source: 'live',
-                    question: this.currentQuestion || undefined,
-                    at: Date.now(),
+                    question: this.currentQuestion || event.question || undefined,
+                    at: this.currentRevisionStartTime || Date.now(),
+                    isDone: true,
                 });
                 // Telemetry hook (optional). Plan target: TTFT <1.4s, total <1.8s.
                 if (event.totalMs != null) {

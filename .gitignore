@@ -400,3 +400,4 @@ Sample thesis for testing.pdf
 # User-submitted crash reports / debug logs (device + session diagnostics — never commit)
 user log/
 *.ips
+main.js

@@ -59,7 +59,7 @@ export async function runKbSuggest(
     const llmHelper = appState.processingHelper.getLLMHelper();
     const [rawResult, rewriteResult] = await Promise.all([
         kb.querySharedAndCaseKB(question, active.clientCaseId, { limit: 4 }),
-        rewriteQuery(question, llmHelper).catch(() => null),
+        rewriteQuery(question, llmHelper).catch((): null => null),
     ]);
 
     // If rewrite produced a different query, search with it too and merge

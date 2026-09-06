@@ -3,7 +3,18 @@
  * Configuration for STT providers (Google gRPC, REST, WebSocket)
  */
 
-export type SttProviderId = 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'natively';
+export type SttProviderId =
+    | 'google'
+    | 'groq'
+    | 'openai'
+    | 'deepgram'
+    | 'elevenlabs'
+    | 'azure'
+    | 'ibmwatson'
+    | 'soniox'
+    | 'natively'
+    | 'local-whisper'
+    | 'sarvam';
 
 export interface SttProviderConfig {
     id: SttProviderId;
@@ -122,6 +133,44 @@ export const STT_PROVIDERS: Record<SttProviderId, SttProviderConfig> = {
         uploadType: 'websocket',
         authHeader: () => ({}),
         responseContentPath: '',
+    },
+    sarvam: {
+        id: 'sarvam',
+        name: 'Sarvam AI (Indic-First)',
+        description: 'Indic-first speech-to-text with support for Hinglish, Hindi, Tamil, Telugu and 22+ Indian languages',
+        endpoint: 'https://api.sarvam.ai/speech-to-text',
+        model: 'saaras:v3',
+        uploadType: 'multipart',
+        availableModels: [
+            { id: 'saaras:v3', label: 'Saaras v3 (Fastest & Most Accurate)' },
+            { id: 'saaras:v2', label: 'Saaras v2' },
+        ],
+        authHeader: (apiKey: string) => ({
+            'api-subscription-key': apiKey,
+        }),
+        responseContentPath: 'transcript',
+    },
+    soniox: {
+        id: 'soniox',
+        name: 'Soniox Speech AI',
+        description: 'Conversational speech recognition',
+        endpoint: 'https://api.soniox.com/v1/transcribe',
+        model: 'en_v2',
+        uploadType: 'websocket',
+        authHeader: (apiKey: string) => ({
+            Authorization: `Bearer ${apiKey}`,
+        }),
+        responseContentPath: 'text',
+    },
+    'local-whisper': {
+        id: 'local-whisper',
+        name: 'Local Whisper (On-Device)',
+        description: 'Private on-device transcription via Whisper / sherpa-onnx',
+        endpoint: '',
+        model: 'whisper-base',
+        uploadType: 'binary',
+        authHeader: () => ({}),
+        responseContentPath: 'text',
     },
 };
 

@@ -109,7 +109,7 @@ const GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
 // serial Gemini cascade (flash-lite → flash → pro) — flash-lite leads, flash and
 // pro are pure pre-first-token fallbacks. The former VISION_HEDGE_ENABLED /
 // TEXT_HEDGE_ENABLED / GEMINI_TEXT_HEDGE_CONFIG knobs were removed.
-const GROQ_MODEL = "llama-3.3-70b-versatile"
+const GROQ_MODEL = "llama-3.1-8b-instant"
 const OPENAI_MODEL = "gpt-5.4"
 const CLAUDE_MODEL = "claude-sonnet-4-6"
 const DEEPSEEK_MODEL = "deepseek-v4-flash"
@@ -1696,7 +1696,7 @@ CRITICAL RULES:
    * @param lastQuestion - The most recent question from the interviewer
    * @returns Suggested response for the user
    */
-  public async generateSuggestion(context: string, lastQuestion: string): Promise<string> {
+  public async generateSuggestion(context: string, lastQuestion: string, systemPromptOverride?: string): Promise<string> {
     // Load active mode system prompt and context block (reference files + custom context)
     let activeModePrompt = '';
     let modeContextBlock = '';
@@ -1740,7 +1740,7 @@ CRITICAL RULES:
 
     const suggestionContext = enrichedContext;
 
-    const basePrompt = activeModePrompt
+    const basePrompt = systemPromptOverride || (activeModePrompt
       ? `${HARD_SYSTEM_PROMPT}\n\n## ACTIVE MODE\n${activeModePrompt}`
       : `You are an expert conversation coach. Based on the transcript, provide a concise, natural response the user could say.
 
@@ -1751,7 +1751,7 @@ RULES:
 - If it's a technical question, provide a clear, structured answer
 - Do NOT preface with "You could say" or similar - just give the answer directly
 - If unsure, answer briefly and confidently anyway.
-- Never hedge. Never say "it depends".`;
+- Never hedge. Never say "it depends".`);
 
     const promptMessage = `LATEST QUESTION:
 ${lastQuestion}
@@ -1781,23 +1781,45 @@ Do NOT switch to Hindi, Spanish, or any other language even if the user speaks i
       }
       if (this.useOllama) {
         return await this.callOllama(promptMessage, undefined, systemPrompt);
-      } else if (this.customProvider || this.activeCurlProvider) {
-        let fullResponse = '';
-        for await (const chunk of this.streamChat(promptMessage, undefined, suggestionContext, basePrompt, true)) {
-          fullResponse += chunk;
-        }
-        return this.processResponse(fullResponse);
-      } else if (this.client) {
-        let fullResponse = '';
-        for await (const chunk of this.streamChat(promptMessage, undefined, suggestionContext, basePrompt, true)) {
-          fullResponse += chunk;
-        }
-        return this.processResponse(fullResponse);
       } else {
-        throw new Error("No LLM provider configured");
+        // Universal provider support: streamChat routes across Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Custom cURL, Natively
+        let fullResponse = '';
+        for await (const chunk of this.streamChat(promptMessage, undefined, suggestionContext, basePrompt, true)) {
+          fullResponse += chunk;
+        }
+        if (!fullResponse.trim()) {
+          throw new Error("No suggestion returned by active LLM provider");
+        }
+        return this.processResponse(fullResponse);
       }
     } catch (error) {
       throw error;
+    }
+  }
+
+  /**
+   * Stream a suggestion token-by-token. Used by SuggestionPipeline for low-latency live suggestions.
+   * Universally routes across all active providers (Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Ollama).
+   */
+  public async *streamSuggestion(
+    context: string,
+    lastQuestion: string,
+    abortSignal?: AbortSignal,
+    systemPromptOverride?: string
+  ): AsyncGenerator<string, void, unknown> {
+    const promptMessage = `Client question:\n"${lastQuestion}"\n\nProvide the direct response:`;
+    const basePrompt = systemPromptOverride || `You are an expert legal co-counsel coaching an Indian lawyer during a live client meeting.`;
+    for await (const chunk of this.streamChat(
+      promptMessage,
+      undefined,
+      context,
+      basePrompt,
+      true, // ignoreKnowledgeMode
+      false, // skipModeInjection
+      [], // extraDataScopes
+      abortSignal
+    )) {
+      yield chunk;
     }
   }
 
@@ -2378,9 +2400,9 @@ const isMultimodal = !!(imagePaths?.length);
           return await this.generateWithGroq(cloudUserContent, GROQ_MODEL, skipSystemPrompt ? undefined : finalGroqPrompt);
         } catch (e: any) {
           console.warn("[LLMHelper] Groq Fast Text failed, falling back to standard routing:", e.message);
-          if (typeof e?.message === 'string' && /401|invalid[_\s-]api[_\s-]key/i.test(e.message)) {
+          if (typeof e?.message === 'string' && /401|404|not[_\s-]found|invalid[_\s-]api[_\s-]key/i.test(e.message)) {
             this._groqLocalDisabled = true;
-            console.warn("[LLMHelper] Local Groq key rejected (401) — disabling local Groq for the rest of this session.");
+            console.warn("[LLMHelper] Local Groq key rejected or model not found — disabling local Groq for the rest of this session.");
           }
           // Fall through to standard routing
         }
@@ -5251,9 +5273,9 @@ const isMultimodal = !!(imagePaths?.length);
           return;
         } catch (e: any) {
           console.warn("[LLMHelper] Groq Fast Text streaming failed, falling back:", e.message);
-          if (typeof e?.message === 'string' && /401|invalid[_\s-]api[_\s-]key/i.test(e.message)) {
+          if (typeof e?.message === 'string' && /401|404|not[_\s-]found|invalid[_\s-]api[_\s-]key/i.test(e.message)) {
             this._groqLocalDisabled = true;
-            console.warn("[LLMHelper] Local Groq key rejected (401) — disabling local Groq for the rest of this session. Re-enable by saving a new key in Settings.");
+            console.warn("[LLMHelper] Local Groq key rejected or model not found — disabling local Groq for the rest of this session. Re-enable by saving a new key in Settings.");
           }
         }
         // Local Groq failed — fall through to Natively if available

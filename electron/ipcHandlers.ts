@@ -3843,16 +3843,17 @@ export function initializeIpcHandlers(appState: AppState): void {
       const summary = meeting.summary ? JSON.parse(meeting.summary) : null;
       let content: string;
       let defaultFilename: string;
-      const safeTitle = (meeting.title || `meeting-${params.meetingId}`).replace(/[^a-zA-Z0-9-_ ]/g, '_');
-      const dateStr = new Date(meeting.start_time || Date.now()).toISOString().split('T')[0];
+      const m = meeting as any;
+      const safeTitle = (m.title || `meeting-${params.meetingId}`).replace(/[^a-zA-Z0-9-_ ]/g, '_');
+      const dateStr = new Date(m.start_time || m.created_at || Date.now()).toISOString().split('T')[0];
       if (format === 'json') {
-        content = JSON.stringify({ meeting: { id: meeting.id, title: meeting.title, start_time: meeting.start_time, duration_ms: meeting.duration_ms }, summary }, null, 2);
+        content = JSON.stringify({ meeting: { id: m.id, title: m.title, start_time: m.start_time || m.created_at, duration_ms: m.duration_ms || m.duration }, summary }, null, 2);
         defaultFilename = `${safeTitle}-${dateStr}.json`;
       } else if (format === 'txt') {
-        content = renderNotesAsText(meeting.title || '', summary);
+        content = renderNotesAsText(m.title || '', summary);
         defaultFilename = `${safeTitle}-${dateStr}.txt`;
       } else {
-        content = renderNotesAsMarkdown(meeting.title || '', meeting.start_time, summary);
+        content = renderNotesAsMarkdown(m.title || '', m.start_time || m.created_at, summary);
         defaultFilename = `${safeTitle}-${dateStr}.md`;
       }
       const { dialog: dlg } = require('electron');
@@ -5925,7 +5926,8 @@ export function initializeIpcHandlers(appState: AppState): void {
         | 'ibmwatson'
         | 'soniox'
         | 'natively'
-        | 'local-whisper',
+        | 'local-whisper'
+        | 'sarvam',
     ) => {
       try {
         const { CredentialsManager } = require('./services/CredentialsManager');
@@ -6894,7 +6896,7 @@ export function initializeIpcHandlers(appState: AppState): void {
           response = await axios.post(
             'https://api.groq.com/openai/v1/chat/completions',
             {
-              model: 'llama-3.3-70b-versatile',
+              model: 'llama-3.1-8b-instant',
               messages: [{ role: 'user', content: 'Hello' }],
             },
             {
@@ -11426,7 +11428,8 @@ export function initializeIpcHandlers(appState: AppState): void {
           { name: 'All Files', extensions: ['*'] },
         ],
       });
-      return { success: true, filePaths: result.filePaths, cancelled: result.canceled };
+      const res = result as any;
+      return { success: true, filePaths: res.filePaths || [], cancelled: res.canceled || false };
     } catch (e: any) {
       return { success: false, cancelled: false, error: e.message };
     }

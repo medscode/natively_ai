@@ -65,6 +65,10 @@ export interface AppSettings {
     // HindsightManager.hindsightMemoryExplicitlyOff()).
     hindsightMemoryEnabledExplicit?: boolean;
     knowledgeMode?: boolean;
+    activeClientCaseId?: string;
+    overlayBounds?: { x: number; y: number; width: number; height: number };
+    webSearchEnabled?: boolean;
+    chatWebSearch?: boolean;
     phoneMirrorEnabled?: boolean;
     phoneMirrorExposeOnLan?: boolean;
     // External optional provider. Default false: do not spawn Ollama unless

@@ -1,6 +1,6 @@
 # Legal RAG Pipeline — Evaluation & Accuracy Report
 
-> **Execution Timestamp:** 2026-08-31 09:20:18 UTC
+> **Execution Timestamp:** 2026-09-02 11:43:38 UTC
 > **Dataset:** 40 Golden Indian Law Consultation Scenarios ([golden-dataset.json](file:///Users/ravipandey/Dev/IA/natively/scripts/eval/golden-dataset.json))
 > **Evaluation Mode:** Standalone Engine Verification (Option A)
 

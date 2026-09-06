@@ -31,7 +31,20 @@ export const MeetingSuggestions: React.FC<{ meetingId: string }> = ({ meetingId 
                 const persisted = api?.chatGetSuggestions
                     ? await api.chatGetSuggestions(meetingId)
                     : [];
-                if (!cancelled) setSuggestions(Array.isArray(persisted) ? persisted : []);
+                const raw = Array.isArray(persisted) ? persisted : [];
+                // Self-heal: filter out any intermediate token fragments that are prefixes of a longer entry
+                const deduplicated = raw.filter((s, idx, arr) => {
+                    const text = (s.text || '').trim();
+                    if (text.length < 10) return false;
+                    const hasFullerDuplicate = arr.some((other, oIdx) =>
+                        oIdx !== idx &&
+                        other.text &&
+                        other.text.length > text.length &&
+                        (other.text.startsWith(text) || other.text.includes(text))
+                    );
+                    return !hasFullerDuplicate;
+                });
+                if (!cancelled) setSuggestions(deduplicated);
             } catch {
                 if (!cancelled) setSuggestions([]);
             }
@@ -63,20 +76,22 @@ export const MeetingSuggestions: React.FC<{ meetingId: string }> = ({ meetingId 
                         className="group relative pl-3 pr-9 py-2.5 rounded-lg border-l-2 border-indigo-500/60 bg-white/[0.02] text-[13px] text-white/90 leading-relaxed hover:bg-white/[0.04] transition-colors"
                     >
                         {s.question && (
-                            <div className="text-[11px] italic text-white/50 mb-1.5 break-words">
-                                <span className="text-white/40 not-italic font-medium">Triggered by: </span>
-                                {s.question}
+                            <div className="text-[11px] text-indigo-400/90 font-medium mb-1.5 flex items-center gap-1.5 break-words">
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                                <span>Triggered by: &ldquo;{s.question}&rdquo;</span>
                             </div>
                         )}
                         <div className="whitespace-pre-wrap break-words">{s.text}</div>
                         {s.citations && s.citations.length > 0 && (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
+                            <div className="mt-2 pt-2 border-t border-white/[0.06] flex flex-wrap gap-1.5 items-center">
+                                <span className="text-[11px] text-white/40 font-medium mr-1">Sources:</span>
                                 {s.citations.map((c: any, i: number) => (
                                     <span
                                         key={i}
-                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-white/5 border border-white/10 text-white/60"
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-indigo-500/10 border border-indigo-500/20 text-indigo-300"
+                                        title={c.snippet || c.title}
                                     >
-                                        {c.title ?? `Source ${i + 1}`}
+                                        <span>{c.title ?? `Source ${i + 1}`}</span>
                                     </span>
                                 ))}
                             </div>

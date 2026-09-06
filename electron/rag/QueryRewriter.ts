@@ -10,7 +10,7 @@
 //   - Uses the cheapest/fastest available LLM (Gemini Flash)
 //   - Falls through gracefully on any error — never blocks suggestions
 
-const REWRITE_TIMEOUT_MS = 500;
+const REWRITE_TIMEOUT_MS = 1200;
 const CACHE_MAX_SIZE = 50;
 
 // ── LRU Cache ──────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ export interface RewriteResult {
  */
 export async function rewriteQuery(
     question: string,
-    llmHelper: { chatWithGemini?: (prompt: string, systemPrompt?: string, history?: any, json?: boolean) => Promise<string> } | null,
+    llmHelper: { chatWithGemini?: (...args: any[]) => Promise<string> } | null | any,
 ): Promise<RewriteResult> {
     const startedAt = Date.now();
     const trimmed = question.trim();
@@ -151,10 +151,10 @@ export async function rewriteQuery(
 
     // Call LLM with timeout
     try {
-        const prompt = `Client question: "${trimmed}"`;
+        const prompt = `${REWRITE_SYSTEM_PROMPT}\n\nClient question: "${trimmed}"`;
 
         const rewritten = await Promise.race([
-            llmHelper.chatWithGemini(prompt, REWRITE_SYSTEM_PROMPT),
+            llmHelper.chatWithGemini(prompt, undefined, undefined, true),
             new Promise<string>((_, reject) =>
                 setTimeout(() => reject(new Error('QueryRewriter timeout')), REWRITE_TIMEOUT_MS)
             ),

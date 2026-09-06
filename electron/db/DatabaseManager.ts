@@ -124,6 +124,10 @@ export class DatabaseManager {
         return this.db !== null;
     }
 
+    public getUserDataPath(): string {
+        return path.dirname(this.dbPath);
+    }
+
     /**
      * Truncate the WAL file by running a `PRAGMA wal_checkpoint(TRUNCATE)`.
      * On a force-quit or a crash mid-write, the `-wal` file is left in an

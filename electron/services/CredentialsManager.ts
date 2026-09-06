@@ -50,6 +50,7 @@ export interface StoredCredentials {
     /** Manual output ceiling for LiteLLM-proxied models. Unset → Auto (per-model via /model/info). */
     litellmMaxTokens?: number;
     googleServiceAccountPath?: string;
+    googleCloudKeyJson?: string;
     customProviders?: CustomProvider[];
     curlProviders?: CurlProvider[];
     defaultModel?: string;

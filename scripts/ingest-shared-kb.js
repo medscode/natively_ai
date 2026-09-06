@@ -24,7 +24,9 @@ const { app } = require('electron');
 
 const repoRoot = nodePath.resolve(__dirname, '..');
 const distRoot = nodePath.join(repoRoot, 'dist-electron', 'electron');
-const KB_SHARED_DIR = nodePath.join(repoRoot, 'kb-shared');
+const KB_SHARED_DIR = nodeFs.existsSync(nodePath.join(repoRoot, 'KB-shared'))
+  ? nodePath.join(repoRoot, 'KB-shared')
+  : nodePath.join(repoRoot, 'kb-shared');
 
 // ── Constants ─────────────────────────────────────────────────────────
 const SHARED_KB_CASE_ID = '__shared_legal_kb__';
@@ -113,6 +115,12 @@ function hashFile(filePath) {
 // ── Main ──────────────────────────────────────────────────────────────
 
 async function main() {
+  // Match the live app's userData directory. Without this, standalone
+  // `electron scripts/ingest-shared-kb.js` defaults to `Electron/` (the
+  // binary name) while the live app resolves `getPath('userData')` to `natively/`
+  // via package.json. Calling setName() here makes both write to the same DB.
+  app.setName('natively');
+
   await app.whenReady();
 
   console.log('');

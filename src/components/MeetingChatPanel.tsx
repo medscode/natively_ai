@@ -421,13 +421,20 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 //   suggest → append to proactiveSuggestions (visible bubbles)
                 //   manual  → overwrite pendingSuggestion (single-slot, most-
                 //             recent-wins). The Sparkles button reveals this.
-                const isUpdateOfPending = (cur: SuggestionItem | null) =>
-                    !!cur && cur.source === s.source && Math.abs(cur.at - s.at) < 50;
+                const suggestionKey = s.id || `${s.at}`;
 
                 if (mode === 'manual') {
                     setPendingSuggestion(cur => {
-                        if (cur && isUpdateOfPending(cur)) {
-                            const updated: SuggestionItem = { ...cur, suggestion: s.suggestion, citations: s.citations, question: s.question ?? cur.question };
+                        const updated: SuggestionItem = {
+                            id: suggestionKey,
+                            suggestion: s.suggestion,
+                            citations: s.citations ?? cur?.citations,
+                            source: s.source,
+                            at: s.at,
+                            question: s.question ?? cur?.question,
+                        };
+                        // Only persist when the suggestion is finished (isDone)
+                        if (s.isDone) {
                             window.electronAPI?.suggestionSave?.({
                                 meetingId: currentMeetingId,
                                 item: {
@@ -439,11 +446,54 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     question: updated.question,
                                 },
                             });
-                            return updated;
                         }
-                        const item: SuggestionItem = { id: `${s.at}-pending`, suggestion: s.suggestion, citations: s.citations, source: s.source, at: s.at, question: s.question };
-                        // Persist on every update so the Suggestions tab also
-                        // sees manual-mode reveals after meeting end.
+                        return updated;
+                    });
+                    return;
+                }
+
+                setProactiveSuggestions(prev => {
+                    // Match by stable suggestion ID
+                    const existingIdx = prev.findIndex(item => item.id === suggestionKey);
+                    if (existingIdx >= 0) {
+                        // Update in-place smoothly
+                        const updated = [...prev];
+                        updated[existingIdx] = {
+                            ...updated[existingIdx],
+                            suggestion: s.suggestion,
+                            citations: s.citations ?? updated[existingIdx].citations,
+                            question: s.question ?? updated[existingIdx].question,
+                        };
+                        // Only persist when the suggestion is completely finished
+                        if (s.isDone) {
+                            window.electronAPI?.suggestionSave?.({
+                                meetingId: currentMeetingId,
+                                item: {
+                                    suggestionId: updated[existingIdx].id,
+                                    text: updated[existingIdx].suggestion,
+                                    citations: updated[existingIdx].citations ?? [],
+                                    source: updated[existingIdx].source,
+                                    firedAt: updated[existingIdx].at,
+                                    question: updated[existingIdx].question,
+                                },
+                            });
+                        }
+                        return updated;
+                    }
+
+                    // Otherwise append a new entry
+                    const item: SuggestionItem = {
+                        id: suggestionKey,
+                        suggestion: s.suggestion,
+                        citations: s.citations,
+                        source: s.source,
+                        at: s.at,
+                        question: s.question,
+                    };
+                    setStreamingId(suggestionKey);
+                    const next = [...prev, item];
+                    if (next.length > MAX_SUGGESTIONS) next.shift();
+                    if (s.isDone) {
                         window.electronAPI?.suggestionSave?.({
                             meetingId: currentMeetingId,
                             item: {
@@ -455,61 +505,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                 question: item.question,
                             },
                         });
-                        return item;
-                    });
-                    return;
-                }
-
-                setProactiveSuggestions(prev => {
-                    // Find the last entry that's currently streaming (same at-ts within 50ms).
-                    const lastIdx = prev.length - 1;
-                    const last = lastIdx >= 0 ? prev[lastIdx] : null;
-                    if (last && last.source === s.source && Math.abs(last.at - s.at) < 50) {
-                        // Update in-place.
-                        const updated = [...prev];
-                        updated[lastIdx] = { ...last, suggestion: s.suggestion, citations: s.citations, question: s.question ?? last.question };
-                        // Phase P: persist on every update (UNIQUE dedupes by id).
-                        // Final text wins because each new token overwrites prior text.
-                        window.electronAPI?.suggestionSave?.({
-                            meetingId: currentMeetingId,
-                            item: {
-                                suggestionId: updated[lastIdx].id,
-                                text: updated[lastIdx].suggestion,
-                                citations: updated[lastIdx].citations ?? [],
-                                source: updated[lastIdx].source,
-                                firedAt: updated[lastIdx].at,
-                                question: updated[lastIdx].question,
-                            },
-                        });
-                        return updated;
                     }
-                    // Otherwise append a new entry. Cap at MAX_SUGGESTIONS, dropping oldest.
-                    const id = `${s.at}-${prev.length}`;
-                    const item: SuggestionItem = {
-                        id,
-                        suggestion: s.suggestion,
-                        citations: s.citations,
-                        source: s.source,
-                        at: s.at,
-                        question: s.question,
-                    };
-                    setStreamingId(id);
-                    const next = [...prev, item];
-                    if (next.length > MAX_SUGGESTIONS) next.shift();
-                    // Phase P: persist the new bubble. Use the timestamp-based id
-                    // so re-emitting the same suggestion idempotently overwrites
-                    // rather than appending duplicates.
-                    window.electronAPI?.suggestionSave?.({
-                        meetingId: currentMeetingId,
-                        item: {
-                            suggestionId: item.id,
-                            text: item.suggestion,
-                            citations: item.citations ?? [],
-                            source: item.source,
-                            firedAt: item.at,
-                            question: item.question,
-                        },
-                    });
                     return next;
                 });
             },

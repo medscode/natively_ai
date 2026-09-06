@@ -50,6 +50,8 @@ export interface SuggestionProgressiveEvent {
     kind: 'start' | 'token' | 'citation' | 'done' | 'cancelled' | 'error';
     /** Revision under which this event was emitted. Renderer can ignore if stale. */
     revision: number;
+    /** Unique stable identifier for this suggestion (e.g. 'sugg_12'). */
+    suggestionId?: string;
     /** Question / utterance that triggered this suggestion. */
     question?: string;
     /** Cumulative streamed text so far (set on token/done). */
@@ -68,6 +70,27 @@ export interface SuggestionProgressiveEvent {
 const DEFAULT_COOLDOWN_MS = 5_000; // matches main.ts LIVE_SUGGEST_COOLDOWN_MS
 const RETRIEVAL_DEADLINE_MS = 300;
 const STALE_AFTER_MS = 8_000; // give up on an in-flight job after this even without a revision bump
+
+/**
+ * Filter out conversational banter and filler so the copilot only triggers
+ * on substantive queries rather than "Hey what's up" or "So basically we are doing so".
+ */
+function isCasualBanter(text: string): boolean {
+    const clean = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!clean) return true;
+
+    // Very short filler words
+    if (clean.length < 15) {
+        const shortFiller = /^(hey|hello|hi|good\s*(morning|evening|afternoon)|ok|okay|yeah|yes|no|right|cool|got it|sure|alright|fine|thanks?|thank you|what'?s up|so basically)$/i;
+        if (shortFiller.test(clean)) return true;
+    }
+
+    // Common repetitive conversational fillers without substantive queries
+    const pureBanter = /^(hey\s*what'?s\s*up(\s*hey\s*what'?s\s*up)*|okay\s*so\s*we\s*were\s*saying.*|so\s*basically\s*we\s*are\s*doing\s*so|you\s*are\s*catching\s*up\s*right.*|can\s*you\s*hear\s*me.*|am\s*i\s*audible.*|testing\s*one\s*two.*)$/i;
+    if (pureBanter.test(clean)) return true;
+
+    return false;
+}
 
 /**
  * SuggestionPipeline owns the latency-critical real-time path.
@@ -97,6 +120,10 @@ export class SuggestionPipeline {
     onTranscriptFinal(input: SuggestionPipelineInput, appState: AppState): void {
         const question = (input.question || '').trim();
         if (question.length < 8) return; // matches main.ts:2858 gate
+        if (isCasualBanter(question)) {
+            console.log(`[SuggestionPipeline] Skipping casual banter utterance: "${question}"`);
+            return;
+        }
         console.log(`[SuggestionPipeline] onTranscriptFinal speaker=${input.speaker || '?'} q="${question.slice(0, 60)}${question.length > 60 ? '…' : ''}"`);
 
         const now = Date.now();
@@ -152,7 +179,7 @@ export class SuggestionPipeline {
         const startedAt = Date.now();
 
         // Signal start.
-        this.emit(appState, { kind: 'start', revision, question: input.question });
+        this.emit(appState, { kind: 'start', revision, suggestionId: `sugg_${revision}`, question: input.question });
 
         // Pull KB context. Guarded by revision so a faster-than-retrieval next
         // utterance doesn't cause stale chunks to feed the LLM.
@@ -187,7 +214,7 @@ export class SuggestionPipeline {
                 kb.querySharedAndCaseKB(input.question, active.clientCaseId, retrievalOpts),
                 new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
             ]),
-            rewriteQuery(input.question, llmHelperForRewrite).catch(() => null),
+            rewriteQuery(input.question, llmHelperForRewrite).catch((): null => null),
         ]);
         if (abort.signal.aborted || this.rev.isStale(revision)) return;
 
@@ -227,54 +254,55 @@ export class SuggestionPipeline {
             snippet: (c.text || '').slice(0, 250),
         }));
 
-        if (chunks.length === 0) {
-            // No KB context — still emit a suggestion, but with NO chunks fed to
-            // the prompt (so the LLM doesn't hallucinate a citation).
-            console.log(`[SuggestionPipeline] NO CHUNKS for q="${input.question.slice(0, 40)}…" — emitting generic suggestion`);
-            this.emit(appState, { kind: 'done', revision, question: input.question, text: '', citations: [] });
+        // Build the prompt with authority-labeled context and strict Indian legal notation
+        const hasChunks = chunks.length > 0;
+        const ctxBlock = hasChunks
+            ? ((retrievalResult && (retrievalResult as any).formattedContext) || chunks.map((c: any, i: number) =>
+                `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
+            ).join('\n\n'))
+            : 'No specific knowledge base context found for this query. Provide a direct, professional legal answer based on general Indian law principles.';
+
+        if (!hasChunks) {
+            console.log(`[SuggestionPipeline] No specific chunks for q="${input.question.slice(0, 40)}…" — generating general legal suggestion`);
         }
 
-        // Build the prompt with authority-labeled context and strict Indian legal notation
-        const ctxBlock = (retrievalResult && (retrievalResult as any).formattedContext) || chunks.map((c: any, i: number) =>
-            `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
-        ).join('\n\n');
+        const combinedContext = [
+            input.transcriptContext ? `Recent conversation transcript:\n${input.transcriptContext.slice(0, 800)}` : '',
+            `Retrieved Knowledge Base Context:\n${ctxBlock}`,
+        ].filter(Boolean).join('\n\n');
 
-        const prompt = `You are an expert legal co-counsel coaching a lawyer during a live client meeting.
-The client just said / asked:
-"${input.question}"
+        const legalSystemPrompt = `You are an expert legal co-counsel coaching an Indian advocate during a live client meeting.
+CRITICAL RULES:
+1. MAXIMUM 60-80 WORDS TOTAL. Be extremely concise, punchy, and direct. The lawyer must be able to glance and speak immediately.
+2. ZERO CONVERSATIONAL FILLER: Never start with pleasantries, greetings, or acknowledgments (do NOT say "Yes, I am completely up to speed...", "Let us proceed...", "Hello", or "Thank you"). Start directly with the actionable legal advice.
+3. FORMAT:
+   - Direct Answer: 1 crisp sentence the lawyer can speak immediately.
+   - Statutory Basis: 1-2 concise bullet points with legal reasoning, section numbers, and Act names.
+   - Short Source line at the very end: "Sources: [Act Name, Sec. X]"
+4. CITATION NOTATION: Use Indian legal notation: "Sec." or "Section" (e.g. "Sec. 126 of Transfer of Property Act, 1882", "Sec. 5 of Indian Trusts Act, 1882"). NEVER use the "§" symbol.
+5. If relying on secondary or unverified sources (marked with ⚠️), note [Needs Verification].`;
 
-${input.transcriptContext ? `Recent conversation transcript:\n${input.transcriptContext.slice(0, 800)}\n\n` : ''}Retrieved Knowledge Base Context:
-${ctxBlock}
-
-STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
-1. DIRECT ANSWER (BOTTOM LINE): Provide a direct, clear 1-2 sentence answer that the lawyer can speak immediately to address the client's question. No preamble (do NOT say "Here is what to say" or "As a lawyer...").
-2. KEY POINTS & STATUTORY BASIS: Follow with 2-3 concise bullet points with legal reasoning, conditions, exceptions, or procedural steps.
-3. CITATION CONVENTION: Use the Indian legal notation format: use "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 6 of the Hindu Succession Act, 1956", "Order XXXIX of CPC, 1908"). NEVER use the "§" symbol.
-4. EXACT DOCUMENT CITATION: Explicitly name the document/Act from which the rule is drawn. If relying on secondary sources (⚠️), note that it requires verification.`;
-
-        // Stream the LLM. Falls through to LLMHelper's existing streaming path
-        // (which itself uses Gemini 2.0 Flash with prompt caching via cachedContent).
+        // Stream the LLM. Universally routes across Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Ollama
         const llmHelper = appState.processingHelper.getLLMHelper();
         let accumulated = '';
         let firstTokenAt: number | null = null;
+        const suggestionId = `sugg_${revision}`;
         console.log(`[SuggestionPipeline] retrieval OK chunks=${chunks.length} — calling LLM`);
 
         try {
-            // Prefer a streaming method if LLMHelper exposes one (it does — see
-            // streamGeminiTextCascade). Fall back to the legacy non-streaming
-            // generateSuggestion() if no streaming API is available in this build.
             const streamingFn = (llmHelper as any).streamSuggestion
                 || (llmHelper as any).streamCoachingSuggestion
                 || null;
 
             if (typeof streamingFn === 'function') {
-                for await (const delta of streamingFn.call(llmHelper, input.transcriptContext || ctxBlock, input.question, abort.signal)) {
+                for await (const delta of streamingFn.call(llmHelper, combinedContext, input.question, abort.signal, legalSystemPrompt)) {
                     if (abort.signal.aborted || this.rev.isStale(revision)) return;
                     if (firstTokenAt === null) firstTokenAt = Date.now();
                     accumulated += delta;
                     this.emit(appState, {
                         kind: 'token',
                         revision,
+                        suggestionId,
                         question: input.question,
                         delta,
                         text: accumulated,
@@ -285,8 +313,9 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
                 console.log(`[SuggestionPipeline] using non-streaming generateSuggestion() (no streamingFn on LLMHelper)`);
                 if (abort.signal.aborted || this.rev.isStale(revision)) return;
                 const suggestion = await llmHelper.generateSuggestion(
-                    input.transcriptContext || ctxBlock,
+                    combinedContext,
                     input.question,
+                    legalSystemPrompt,
                 );
                 console.log(`[SuggestionPipeline] generateSuggestion returned length=${(suggestion || '').length}`);
                 if (abort.signal.aborted || this.rev.isStale(revision)) return;
@@ -295,6 +324,7 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
                 this.emit(appState, {
                     kind: 'token',
                     revision,
+                    suggestionId,
                     question: input.question,
                     delta: suggestion,
                     text: accumulated,
@@ -306,6 +336,7 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
             this.emit(appState, {
                 kind: 'error',
                 revision,
+                suggestionId,
                 question: input.question,
                 error: err?.message || String(err),
             });
@@ -320,12 +351,34 @@ STRUCTURE YOUR RESPONSE IN THIS EXACT ORDER:
         this.emit(appState, {
             kind: 'done',
             revision,
+            suggestionId,
             question: input.question,
             text: verifiedText,
             citations,
             ttftMs: firstTokenAt ? firstTokenAt - startedAt : undefined,
             totalMs: Date.now() - startedAt,
         });
+
+        // Direct Backend Persistence: Safely persist completed suggestion to SQLite.
+        // Guaranteed to run once per completed suggestion with verified text and citations.
+        try {
+            const meetingId = (appState as any)?.getCurrentMeetingId?.();
+            if (meetingId && verifiedText && verifiedText.trim()) {
+                const { DatabaseManager } = require('../../db/DatabaseManager');
+                const dbm = DatabaseManager.getInstance();
+                dbm.insertSuggestion(meetingId, {
+                    suggestionId,
+                    text: verifiedText,
+                    citations: citations || [],
+                    source: 'live',
+                    firedAt: startedAt,
+                    question: input.question,
+                });
+                console.log(`[SuggestionPipeline] Persisted final suggestion ${suggestionId} for meeting ${meetingId} with ${(citations || []).length} citations`);
+            }
+        } catch (dbErr: any) {
+            console.warn('[SuggestionPipeline] Failed to persist final suggestion:', dbErr?.message);
+        }
     }
 
     private emit(appState: AppState, event: SuggestionProgressiveEvent): void {

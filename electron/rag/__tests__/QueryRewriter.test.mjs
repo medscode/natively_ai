@@ -44,8 +44,8 @@ describe('QueryRewriter', () => {
     test('recovers gracefully from LLM timeout or error', async () => {
         const timeoutLLM = {
             async chatWithGemini() {
-                // Simulate delay exceeding 500ms timeout
-                await new Promise(r => setTimeout(r, 700));
+                // Simulate delay exceeding 1200ms timeout
+                await new Promise(r => setTimeout(r, 1400));
                 return 'Late answer';
             }
         };

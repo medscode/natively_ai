@@ -308,7 +308,7 @@ export class RAGManager {
                             id: `web-${idx}`,
                             sourceType: 'web',
                             title: r.title,
-                            similarity: undefined,
+                            similarity: undefined as number | undefined,
                             snippet: r.snippet,
                             url: r.url,
                         }));

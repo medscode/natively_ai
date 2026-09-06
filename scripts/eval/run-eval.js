@@ -18,8 +18,10 @@ const fs = require('fs');
 const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '../..');
-const distRoot = path.join(repoRoot, 'dist-electron', 'electron');
-const kbSharedDir = path.join(repoRoot, 'kb-shared', 'Authoritative');
+const sharedRoot = fs.existsSync(path.join(repoRoot, 'KB-shared'))
+    ? path.join(repoRoot, 'KB-shared')
+    : path.join(repoRoot, 'kb-shared');
+const kbSharedDir = path.join(sharedRoot, 'Authoritative');
 const datasetPath = path.join(__dirname, 'golden-dataset.json');
 const outputPath = path.join(__dirname, 'eval-report.md');
 
