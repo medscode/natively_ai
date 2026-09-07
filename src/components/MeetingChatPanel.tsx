@@ -670,7 +670,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             streamBuffer.reset();
             let citations: Citation[] = [];
 
-            // Safety deadman timeout (18 seconds max for response)
+            // Safety deadman timeout (45 seconds max before network fallback)
             streamTimer = setTimeout(() => {
                 const currentBuffered = streamBuffer.getBufferedContent();
                 if (currentBuffered.trim().length > 0) {
@@ -689,12 +689,16 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 setChatState('idle');
                 streamBuffer.reset();
                 cleanupAll();
-            }, 18000);
+            }, 45000);
 
             citeCleanup = window.electronAPI?.onKBStreamCitations?.((data) => {
                 citations = data.citations || [];
             });
             tokenCleanup = window.electronAPI?.onKBStreamChunk?.((data: { text: string }) => {
+                if (streamTimer) {
+                    clearTimeout(streamTimer);
+                    streamTimer = undefined;
+                }
                 setChatState('streaming_response');
                 streamBuffer.appendToken(data.text, (content) => {
                     setMessages(prev => prev.map(msg =>

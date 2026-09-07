@@ -439,12 +439,34 @@ export class KnowledgeBaseManager {
         const minSimilarity = opts?.minSimilarity ?? 0.30;
 
         try {
-            const embeddingResult = await this.embeddingPipeline.getEmbeddingWithFallback(query);
-            const embedding = embeddingResult?.embedding;
+            // Fast race: if cloud embedding takes > 2500ms (e.g. rate limit/network cooldown),
+            // immediately proceed with local 384d MiniLM embedding
+            let embeddingResult = await Promise.race([
+                this.embeddingPipeline.getEmbeddingWithFallback(query),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+            ]).catch(() => null);
+
+            let embedding = embeddingResult?.embedding;
+            let spaceKey = embeddingResult?.space || this.embeddingPipeline.getActiveSpaceKey();
+
+            // If primary cloud embedding timed out or failed, use local 384d provider directly
+            if (!embedding) {
+                try {
+                    const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
+                    const localProvider = new LocalEmbeddingProvider();
+                    const localQueryEmbed = await localProvider.embedQuery(query);
+                    if (localQueryEmbed && localQueryEmbed.length === 384) {
+                        embedding = localQueryEmbed;
+                        spaceKey = localProvider.space;
+                    }
+                } catch (e: any) {
+                    console.warn('[KnowledgeBaseManager] Local fallback embedding failed:', e?.message);
+                }
+            }
+
             if (!embedding) {
                 return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
             }
-            const spaceKey = this.embeddingPipeline.getActiveSpaceKey();
 
             // Search shared KB
             let sharedResults = await this.vectorStore.searchSimilar(embedding, {
