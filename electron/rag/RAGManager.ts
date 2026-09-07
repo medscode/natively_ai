@@ -316,15 +316,17 @@ export class RAGManager {
                         const formattedContext = webResults.map((r, i) =>
                             `[${i + 1} — ${r.title} (${r.url})]\n${r.snippet}`
                         ).join('\n\n');
-                        const prompt = `You are an assistant answering a legal / general question using web search results.
-Use the following web snippets to answer. Cite the source URL in your answer.
-
+                        const prompt = `You are an expert legal co-counsel assisting a lawyer. Use the following web search results to answer the question concisely and professionally.
 Web results:
 ${formattedContext}
 
 Question: ${query}
 
-Answer (include source URLs):`;
+Structure:
+1. DIRECT ANSWER: 1-2 direct sentences ready to speak to the client.
+2. STATUTORY / LEGAL OPTIONS: 2 concise bullet points with legal mechanisms.
+3. NEXT QUESTION: 1 clarifying question the lawyer can ask the client.
+4. Sources (with URLs):`;
                         if (this.llmHelper) {
                             try {
                                 const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
@@ -343,7 +345,35 @@ Answer (include source URLs):`;
             } catch (e: any) {
                 console.warn('[RAGManager] KB→web fallback failed:', e?.message);
             }
-            yield { type: 'chunk', text: `I don't have information on this in the legal knowledge base. Try uploading a relevant document or enabling web search in Settings.` };
+
+            // General statutory legal reasoning fallback (when no specific chunk matched in local KB)
+            if (this.llmHelper) {
+                const prompt = `You are an expert legal co-counsel assisting an Indian advocate during a consultation.
+No specific case document was matched for this query in the local uploaded files.
+Provide a direct, authoritative legal answer based on general statutory law, Indian legal principles, and conflict of laws (private international law) where applicable.
+
+QUESTION:
+${query}
+
+STRUCTURE YOUR ANSWER EXACTLY AS FOLLOWS:
+1. DIRECT SPOKEN ANSWER: 1-2 punchy sentences the lawyer can speak immediately to the client.
+2. STATUTORY MECHANISMS & ANALYSIS: 2-3 concise bullet points citing relevant Acts & Sections (use "Sec." or "Section", NEVER "§"). (E.g., Transfer of Property Act 1882, Indian Succession Act 1925, Foreign Exchange Management Act, or cross-border lex situs principles).
+3. CLARIFYING QUESTION: 1 specific follow-up question the lawyer should ask the client to establish jurisdiction, residency, or testamentary intent.
+
+Note: Clearly mention at the end that this is based on general statutory principles.`;
+
+                try {
+                    const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+                    for await (const chunk of stream) {
+                        if (options?.abortSignal?.aborted) break;
+                        yield { type: 'chunk', text: chunk };
+                    }
+                } catch (e: any) {
+                    yield { type: 'chunk', text: `[Legal response note: ${e?.message || 'streaming failed'}]` };
+                }
+            } else {
+                yield { type: 'chunk', text: `I do not have specific case documents for this query. You can ask for general legal principles or enable web search in Settings.` };
+            }
             yield { type: 'done' };
             return;
         }

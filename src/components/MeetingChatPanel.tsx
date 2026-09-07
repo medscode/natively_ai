@@ -183,6 +183,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
     const [showKbPicker, setShowKbPicker] = useState(false);
     const [showPersonaPicker, setShowPersonaPicker] = useState(false);
     const [activePersona, setActivePersona] = useState('Manual');
+    const [copiedSuggestionId, setCopiedSuggestionId] = useState<string | null>(null);
     // Suggestion history — each STT-final trigger appends a new entry. Inline
     // append, newest at bottom, auto-scrolls. Each entry has a stable id so
     // click-to-fill can remove just that card. Capped at MAX_SUGGESTIONS to
@@ -642,6 +643,20 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
         }, 50);
 
         const assistantMessageId = genMessageId();
+        let citeCleanup: (() => void) | undefined;
+        let tokenCleanup: (() => void) | undefined;
+        let doneCleanup: (() => void) | undefined;
+        let errorCleanup: (() => void) | undefined;
+        let streamTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const cleanupAll = () => {
+            if (streamTimer) clearTimeout(streamTimer);
+            tokenCleanup?.();
+            doneCleanup?.();
+            errorCleanup?.();
+            citeCleanup?.();
+        };
+
         try {
             await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -655,10 +670,31 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
             streamBuffer.reset();
             let citations: Citation[] = [];
 
-            const citeCleanup = window.electronAPI?.onKBStreamCitations?.((data) => {
+            // Safety deadman timeout (18 seconds max for response)
+            streamTimer = setTimeout(() => {
+                const currentBuffered = streamBuffer.getBufferedContent();
+                if (currentBuffered.trim().length > 0) {
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === assistantMessageId
+                            ? { ...msg, content: currentBuffered, isStreaming: false, citations }
+                            : msg
+                    ));
+                } else {
+                    setMessages(prev => prev.map(msg =>
+                        msg.id === assistantMessageId
+                            ? { ...msg, content: "Could not retrieve knowledge base response within the timeout. Please check your network or try asking directly.", isStreaming: false }
+                            : msg
+                    ));
+                }
+                setChatState('idle');
+                streamBuffer.reset();
+                cleanupAll();
+            }, 18000);
+
+            citeCleanup = window.electronAPI?.onKBStreamCitations?.((data) => {
                 citations = data.citations || [];
             });
-            const tokenCleanup = window.electronAPI?.onKBStreamChunk?.((data: { text: string }) => {
+            tokenCleanup = window.electronAPI?.onKBStreamChunk?.((data: { text: string }) => {
                 setChatState('streaming_response');
                 streamBuffer.appendToken(data.text, (content) => {
                     setMessages(prev => prev.map(msg =>
@@ -668,38 +704,31 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                     ));
                 });
             });
-            const doneCleanup = window.electronAPI?.onKBStreamComplete?.(() => {
+            doneCleanup = window.electronAPI?.onKBStreamComplete?.(() => {
                 const finalContent = streamBuffer.getBufferedContent();
                 setMessages(prev => prev.map(msg =>
                     msg.id === assistantMessageId
-                        ? { ...msg, content: finalContent, isStreaming: false, citations }
+                        ? { ...msg, content: finalContent || 'No additional details found.', isStreaming: false, citations }
                         : msg
                 ));
                 setChatState('idle');
                 streamBuffer.reset();
-                tokenCleanup?.();
-                doneCleanup?.();
-                errorCleanup?.();
-                citeCleanup?.();
+                cleanupAll();
             });
-            const errorCleanup = window.electronAPI?.onKBStreamError?.((data: { error: string }) => {
+            errorCleanup = window.electronAPI?.onKBStreamError?.((data: { error: string }) => {
                 console.error('[MeetingChatPanel] KB stream error:', data.error);
                 setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
                 setErrorMessage(data?.error || "Couldn't get a response from the knowledge base.");
                 setChatState('error');
                 streamBuffer.reset();
-                tokenCleanup?.();
-                doneCleanup?.();
-                errorCleanup?.();
-                citeCleanup?.();
+                cleanupAll();
             });
 
             // Use kb:ask; falls back to web search internally when toggle is on
             const result = await window.electronAPI?.kbAsk?.({ question });
 
-            // If KB returned empty (no active case), surface a hint and clear the
-            // streaming placeholder
             if (result && !result.success && !result.fallback) {
+                cleanupAll();
                 setMessages(prev => prev.map(msg =>
                     msg.id === assistantMessageId
                         ? { ...msg, content: result.error || 'No answer available.', isStreaming: false }
@@ -708,12 +737,9 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 setChatState('idle');
                 return;
             }
-            if (result?.fallback) {
-                // Stream listener handles the rest through onKBStream*; nothing to do here.
-                return;
-            }
         } catch (e: any) {
             console.error('[MeetingChatPanel] submitQuestion failed:', e);
+            cleanupAll();
             setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
             setErrorMessage(e?.message || 'Something went wrong.');
             setChatState('error');
@@ -821,23 +847,67 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                 initial={{ opacity: 0, y: 6 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 transition={{ duration: 0.22, ease: 'easeOut' }}
-                                                className="group relative pl-3.5 pr-9 py-2.5 rounded-xl border-l-2 border-indigo-400/80 bg-white/[0.04] backdrop-blur-md text-[13px] text-white/95 leading-relaxed hover:bg-white/[0.07] transition-all cursor-pointer shadow-sm"
-                                                onClick={() => {
-                                                    if (hasText) setQuery(s.suggestion);
-                                                }}
-                                                title="Click to insert into the prompt box"
+                                                className="group relative pl-3.5 pr-3 py-2.5 rounded-xl border-l-2 border-indigo-400/80 bg-white/[0.04] backdrop-blur-md text-[13px] text-white/95 leading-relaxed hover:bg-white/[0.06] transition-all shadow-sm"
                                             >
-                                                {/* Triggering transcript question header */}
-                                                {s.question && (
-                                                    <div className="text-[11px] font-semibold text-indigo-300/90 mb-1 flex items-center gap-1.5 truncate" title={`Triggered by: "${s.question}"`}>
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
-                                                        <span className="truncate">Triggered by: &ldquo;{s.question}&rdquo;</span>
-                                                    </div>
-                                                )}
+                                                {/* Header row with Trigger question and action buttons */}
+                                                <div className="flex items-center justify-between gap-2 mb-1">
+                                                    {s.question ? (
+                                                        <div className="text-[11px] font-semibold text-indigo-300/90 flex items-center gap-1.5 truncate" title={`Triggered by: "${s.question}"`}>
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                                                            <span className="truncate">Triggered by: &ldquo;{s.question}&rdquo;</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-[11px] font-medium text-indigo-300/70 flex items-center gap-1">
+                                                            <Sparkles size={11} className="text-indigo-400" />
+                                                            <span>Live Co-Counsel</span>
+                                                        </div>
+                                                    )}
 
-                                                {/* Streaming caret */}
+                                                    {/* Quick Action Buttons */}
+                                                    {hasText && (
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            <button
+                                                                type="button"
+                                                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 transition-all cursor-pointer"
+                                                                title="Clarify and explain the statutory reasoning in detail"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const clarifyPrompt = s.question
+                                                                        ? `Please provide an in-depth legal and statutory explanation for: "${s.question}"`
+                                                                        : `Please elaborate on the legal provisions and statutory reasoning for: ${s.suggestion.slice(0, 100)}...`;
+                                                                    submitQuestion(clarifyPrompt);
+                                                                }}
+                                                            >
+                                                                <HelpCircle size={11} />
+                                                                <span>Clarify</span>
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md hover:bg-white/10 text-white/60 hover:text-white transition-all cursor-pointer"
+                                                                title="Copy words to clipboard"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    try {
+                                                                        navigator.clipboard?.writeText(s.suggestion);
+                                                                        setCopiedSuggestionId(s.id);
+                                                                        setTimeout(() => setCopiedSuggestionId(null), 1500);
+                                                                    } catch { /* ignore */ }
+                                                                }}
+                                                            >
+                                                                {copiedSuggestionId === s.id ? (
+                                                                    <Check size={12} className="text-emerald-400" />
+                                                                ) : (
+                                                                    <Copy size={12} />
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Streaming caret & suggestion body */}
                                                 {hasText ? (
-                                                    <div className="whitespace-pre-wrap break-words">
+                                                    <div className="whitespace-pre-wrap break-words text-white/90 font-normal">
                                                         {s.suggestion}
                                                         {isStreaming && <span className="inline-block w-1.5 h-3 ml-0.5 align-middle bg-indigo-300 animate-pulse" />}
                                                     </div>
@@ -852,26 +922,9 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                     </div>
                                                 )}
 
-                                                {/* Copy button */}
-                                                {hasText && (
-                                                    <button
-                                                        type="button"
-                                                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10 text-white/60 hover:text-white"
-                                                        title="Copy to clipboard"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            try {
-                                                                navigator.clipboard?.writeText(s.suggestion);
-                                                            } catch { /* ignore */ }
-                                                        }}
-                                                    >
-                                                        <Copy size={12} />
-                                                    </button>
-                                                )}
-
                                                 {/* Streaming indicator dots */}
                                                 {isStreaming && (
-                                                    <span className="absolute top-2 left-2 flex gap-0.5" aria-label="streaming">
+                                                    <span className="absolute top-2.5 right-2 flex gap-0.5" aria-label="streaming">
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '0ms' }} />
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '120ms' }} />
                                                         <span className="w-1 h-1 rounded-full bg-indigo-300 animate-pulse" style={{ animationDelay: '240ms' }} />

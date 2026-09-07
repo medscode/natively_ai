@@ -8682,23 +8682,38 @@ export function initializeIpcHandlers(appState: AppState): void {
       const abortController = new AbortController();
       const queryKey = `kb-${crypto.randomUUID()}`;
       activeRAGQueries.set(queryKey, abortController);
+      let streamCompleted = false;
 
-      const stream = ragManager.queryKB(question, { clientCaseId, abortSignal: abortController.signal });
+      try {
+        const stream = ragManager.queryKB(question, { clientCaseId, abortSignal: abortController.signal });
 
-      for await (const evt of stream) {
-        if (abortController.signal.aborted) break;
-        if (evt.type === 'chunk') {
-          event.sender.send('kb:stream-chunk', { text: evt.text });
-        } else if (evt.type === 'citations') {
-          event.sender.send('kb:stream-citations', { citations: evt.citations });
-        } else if (evt.type === 'done') {
+        for await (const evt of stream) {
+          if (abortController.signal.aborted) break;
+          if (evt.type === 'chunk') {
+            event.sender.send('kb:stream-chunk', { text: evt.text });
+          } else if (evt.type === 'citations') {
+            event.sender.send('kb:stream-citations', { citations: evt.citations });
+          } else if (evt.type === 'done') {
+            streamCompleted = true;
+            event.sender.send('kb:stream-complete', {});
+          }
+        }
+      } catch (streamErr: any) {
+        console.error('[IPC] kb:ask streaming error:', streamErr);
+        event.sender.send('kb:stream-chunk', { text: `\n\n[Legal KB note: ${streamErr?.message || 'streaming encountered an issue'}]` });
+      } finally {
+        if (!streamCompleted) {
           event.sender.send('kb:stream-complete', {});
         }
+        activeRAGQueries.delete(queryKey);
       }
-      activeRAGQueries.delete(queryKey);
       return { success: true };
     } catch (error: any) {
       console.error('[IPC] kb:ask failed:', error);
+      try {
+        event.sender.send('kb:stream-error', { error: error.message || 'Knowledge base query failed' });
+        event.sender.send('kb:stream-complete', {});
+      } catch {}
       return { success: false, error: error.message };
     }
   });

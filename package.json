@@ -21,6 +21,7 @@
     "app:build:signed": "npm run build && npm run typecheck:electron && npm run build:electron && cross-env NATIVELY_BUILD_ALL_MAC_ARCHES=1 npm run build:native && node scripts/ensure-sharp-mac-deps.js && node scripts/ensure-sqlite-vec.js && npm run verify:packaged-local-assets && (electron-builder --config electron-builder.signed.cjs; code=$?; node scripts/rebuild-native-electron.js; exit $code)",
     "watch": "tsc -p electron/tsconfig.json --watch",
     "start": "npm run app:dev",
+    "dmg": "node scripts/build-dmg.js",
     "dist": "npm run app:build",
     "dist:signed": "npm run app:build:signed && node scripts/upload-release.mjs",
     "build:native": "node scripts/build-native.js",

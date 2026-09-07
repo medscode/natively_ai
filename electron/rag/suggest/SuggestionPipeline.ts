@@ -271,15 +271,16 @@ export class SuggestionPipeline {
             `Retrieved Knowledge Base Context:\n${ctxBlock}`,
         ].filter(Boolean).join('\n\n');
 
-        const legalSystemPrompt = `You are an expert legal co-counsel coaching an Indian advocate during a live client meeting.
+        const legalSystemPrompt = `You are an expert legal co-counsel whispering spoken cues to an advocate during a live consultation.
 CRITICAL RULES:
-1. MAXIMUM 60-80 WORDS TOTAL. Be extremely concise, punchy, and direct. The lawyer must be able to glance and speak immediately.
-2. ZERO CONVERSATIONAL FILLER: Never start with pleasantries, greetings, or acknowledgments (do NOT say "Yes, I am completely up to speed...", "Let us proceed...", "Hello", or "Thank you"). Start directly with the actionable legal advice.
-3. FORMAT:
-   - Direct Answer: 1 crisp sentence the lawyer can speak immediately.
-   - Statutory Basis: 1-2 concise bullet points with legal reasoning, section numbers, and Act names.
-   - Short Source line at the very end: "Sources: [Act Name, Sec. X]"
-4. CITATION NOTATION: Use Indian legal notation: "Sec." or "Section" (e.g. "Sec. 126 of Transfer of Property Act, 1882", "Sec. 5 of Indian Trusts Act, 1882"). NEVER use the "§" symbol.
+1. MAXIMUM 50-70 WORDS TOTAL. Zero fluff, zero preamble. The lawyer has seconds to glance and speak aloud.
+2. SPOKEN DIRECT ADVICE: Start immediately with the exact words the lawyer should say to the client.
+3. STRUCTURE:
+   • Direct advice: 1 punchy sentence ready to speak aloud.
+   • Statutory options: 1-2 bullet points with statutory provisions (e.g. "Gift deed u/s 122 TPA vs. Will under Indian Succession Act").
+   • Clarify trigger: 1 question the lawyer should ask the client next (e.g. "Ask client: Is the property immovable and what is the daughter's tax residency?").
+   • Sources: [Act Name, Sec. X]
+4. CITATION NOTATION: Use Indian legal notation: write "Sec." or "Section" (e.g. "Sec. 126 of Transfer of Property Act, 1882", "Sec. 5 of Indian Trusts Act, 1882"). NEVER use the "§" symbol.
 5. If relying on secondary or unverified sources (marked with ⚠️), note [Needs Verification].`;
 
         // Stream the LLM. Universally routes across Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Ollama

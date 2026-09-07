@@ -5938,14 +5938,23 @@ const isMultimodal = !!(imagePaths?.length);
     messages.push({ role: "user", content: userMessage });
 
     if (abortSignal?.aborted) return;
-    const stream = await this.groqClient.chat.completions.create({
-      model: modelId,
-      messages,
-      stream: true,
-      temperature: INTERACTIVE_TEMPERATURE,
-      seed: INTERACTIVE_SEED, // Groq honors seed for near-deterministic output
-      max_tokens: 8192,
-    }, { signal: abortSignal });
+    let stream: any;
+    try {
+      stream = await this.groqClient.chat.completions.create({
+        model: modelId,
+        messages,
+        stream: true,
+        temperature: INTERACTIVE_TEMPERATURE,
+        seed: INTERACTIVE_SEED, // Groq honors seed for near-deterministic output
+        max_tokens: 8192,
+      }, { signal: abortSignal });
+    } catch (err: any) {
+      if (err?.status === 401 || err?.message?.includes('401') || err?.message?.includes('invalid_api_key')) {
+        console.warn('[LLMHelper] Groq API key is invalid — disabling Groq client.');
+        this.groqClient = null;
+      }
+      throw err;
+    }
 
     try {
       for await (const chunk of stream) {
@@ -7492,6 +7501,10 @@ const isMultimodal = !!(imagePaths?.length);
           return this.processResponse(text);
         }
       } catch (e: any) {
+        if (e?.status === 401 || e?.message?.includes('401') || e?.message?.includes('invalid_api_key')) {
+          console.warn('[LLMHelper] Groq API key is invalid — disabling Groq client.');
+          this.groqClient = null;
+        }
         console.warn(`[LLMHelper] ⚠️ Groq summary failed: ${e.message}. Falling back to Gemini...`);
       }
     } else {
