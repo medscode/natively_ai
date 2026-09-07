@@ -15,6 +15,7 @@
 const nodePath = require('node:path');
 const nodeFs = require('node:fs');
 
+const repoRoot = nodePath.resolve(__dirname, '..');
 const KB_SHARED_DIR = nodeFs.existsSync(nodePath.join(repoRoot, 'KB-shared'))
   ? nodePath.join(repoRoot, 'KB-shared')
   : nodePath.join(repoRoot, 'kb-shared');
@@ -176,7 +177,18 @@ function warn(msg) { console.log('  ⚠', msg); }
     const kb = KnowledgeBaseManager.getInstance();
     const vs = require(nodePath.join(distRoot, 'rag/VectorStore.js')).VectorStore;
     const ep = require(nodePath.join(distRoot, 'rag/EmbeddingPipeline.js')).EmbeddingPipeline;
-    kb.setPipeline(new vs(db), new ep(db, null));
+    // Resolve a real provider so embedding calls don't throw "Embedding provider not initialized".
+    const { EmbeddingProviderResolver } = require(nodePath.join(distRoot, 'rag/EmbeddingProviderResolver.js'));
+    let provider = null;
+    try {
+      provider = await EmbeddingProviderResolver.resolve({
+        embedding: { provider: 'gemini', model: 'gemini-embedding-2', apiKey: process.env.GEMINI_API_KEY },
+        embeddingProviderConfig: { useLocal: false },
+      });
+    } catch (e) {
+      warn(`Could not resolve gemini provider (${e.message}); falling back to local 384d.`);
+    }
+    kb.setPipeline(new vs(db), new ep(db, provider));
     try {
       const t0 = Date.now();
       const result = await kb.querySharedAndCaseKB(TEST_QUERY, SHARED_CASE, { limit: 5, minSimilarity: 0.30 });
