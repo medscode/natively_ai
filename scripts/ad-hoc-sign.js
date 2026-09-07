@@ -186,38 +186,18 @@ exports.default = async function (context) {
     // ── Step 2: Ad-hoc sign the application (DEV / local distribution only) ──
     // Resolve the path to the entitlements file so V8 gets JIT memory permissions
     const entitlementsPath = path.join(context.packager.info.projectDir, 'build', 'entitlements.mac.plist');
-    
-    // ── Step 2a: Sign the main app bundle with --deep first ──
-    // --deep recurses into nested Mach-O binaries (frameworks, helpers, .node files).
-    // It signs them with --sign - only (no custom entitlements on nested items).
-    // We MUST do this before signing the .node files with entitlements, because
-    // --deep would otherwise overwrite the entitlement-signed .node files.
-    console.log(`[Ad-Hoc Signing] Signing main app ${appPath} with entitlements...`);
 
-    try {
-        // --force: replace existing signature
-        // --deep: sign nested code (frameworks, helpers, .dylib, .node)
-        // --entitlements: attach entitlements to the top-level app bundle
-        // --sign -: ad-hoc signature
-        execSync(`codesign --force --deep ${hardenedOpt}--entitlements "${entitlementsPath}" --sign - "${appPath}"`, { stdio: 'inherit' });
-        console.log('[Ad-Hoc Signing] Successfully signed the application with entitlements.');
-    } catch (error) {
-        console.error('[Ad-Hoc Signing] Failed to sign the application:', error);
-        throw error;
-    }
-
-    // ── Step 2b: Re-sign .node binaries with entitlements AFTER --deep ──
-    // codesign --deep re-signs nested .node binaries without entitlements (it only
-    // applies entitlements to the top-level item). We re-sign them here AFTER --deep
-    // so the entitlements (JIT / library-validation) are preserved on the native
-    // module binary. (Screen/system-audio access is pure TCC — no entitlement.)
+    // ── Step 2a: Sign native .node binaries with entitlements FIRST (inside-out) ──
+    // macOS requires inside-out code signing: modifying any file inside
+    // Contents/Resources/ AFTER signing the outer bundle invalidates the CodeResources
+    // seal ("a sealed resource is missing or invalid"), causing dyld to abort at launch.
     const unpackedNativeDir = path.join(appPath, 'Contents', 'Resources', 'app.asar.unpacked', 'native-module');
     if (fs.existsSync(unpackedNativeDir)) {
         const files = fs.readdirSync(unpackedNativeDir);
         for (const file of files) {
             if (file.endsWith('.node')) {
                 const nodePath = path.join(unpackedNativeDir, file);
-                console.log(`[Ad-Hoc Signing] Re-signing ${file} with entitlements (post --deep)...`);
+                console.log(`[Ad-Hoc Signing] Signing ${file} with entitlements...`);
                 try {
                     execSync(`codesign --force ${hardenedOpt}--entitlements "${entitlementsPath}" --sign - "${nodePath}"`, { stdio: 'inherit' });
                 } catch (error) {
@@ -225,5 +205,18 @@ exports.default = async function (context) {
                 }
             }
         }
+    }
+
+    // ── Step 2b: Sign the top-level app bundle with --deep LAST ──
+    // Sealing the entire app bundle last ensures all frameworks, helpers, and native
+    // binaries are correctly sealed in CodeResources so macOS dyld validates cleanly.
+    console.log(`[Ad-Hoc Signing] Signing main app ${appPath} with entitlements...`);
+
+    try {
+        execSync(`codesign --force --deep ${hardenedOpt}--entitlements "${entitlementsPath}" --sign - "${appPath}"`, { stdio: 'inherit' });
+        console.log('[Ad-Hoc Signing] Successfully signed the application with entitlements.');
+    } catch (error) {
+        console.error('[Ad-Hoc Signing] Failed to sign the application:', error);
+        throw error;
     }
 };
