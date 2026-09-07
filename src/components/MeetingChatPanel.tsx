@@ -865,27 +865,32 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
 
                                                     {/* Quick Action Buttons */}
                                                     {hasText && (
-                                                        <div className="flex items-center gap-1 shrink-0">
+                                                        <div className="flex items-center gap-1.5 shrink-0">
                                                             <button
                                                                 type="button"
-                                                                className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-400/30 transition-all cursor-pointer"
-                                                                title="Clarify and explain the statutory reasoning in detail"
+                                                                className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-md bg-indigo-500/25 hover:bg-indigo-500/40 text-indigo-100 border border-indigo-400/40 transition-all cursor-pointer font-medium"
+                                                                title="Get a deeper, more detailed statutory explanation grounded in the cited sources"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    const clarifyPrompt = s.question
-                                                                        ? `Please provide an in-depth legal and statutory explanation for: "${s.question}"`
-                                                                        : `Please elaborate on the legal provisions and statutory reasoning for: ${s.suggestion.slice(0, 100)}...`;
+                                                                    const sources = (s.citations || [])
+                                                                        .map(c => c.title)
+                                                                        .filter(Boolean)
+                                                                        .join('; ');
+                                                                    const seed = s.question || s.suggestion.slice(0, 100);
+                                                                    const clarifyPrompt = sources
+                                                                        ? `Explain in depth, citing the same sources [${sources}], the statutory reasoning behind: "${seed}"`
+                                                                        : `Explain in depth the statutory reasoning behind: "${seed}"`;
                                                                     submitQuestion(clarifyPrompt);
                                                                 }}
                                                             >
-                                                                <HelpCircle size={11} />
+                                                                <HelpCircle size={11} strokeWidth={2.5} />
                                                                 <span>Clarify</span>
                                                             </button>
 
                                                             <button
                                                                 type="button"
-                                                                className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md hover:bg-white/10 text-white/60 hover:text-white transition-all cursor-pointer"
-                                                                title="Copy words to clipboard"
+                                                                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md hover:bg-white/10 text-white/70 hover:text-white border border-white/10 transition-all cursor-pointer"
+                                                                title="Copy the speakable lines to clipboard"
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     try {
@@ -896,9 +901,15 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                                 }}
                                                             >
                                                                 {copiedSuggestionId === s.id ? (
-                                                                    <Check size={12} className="text-emerald-400" />
+                                                                    <>
+                                                                        <Check size={11} className="text-emerald-400" />
+                                                                        <span>Copied</span>
+                                                                    </>
                                                                 ) : (
-                                                                    <Copy size={12} />
+                                                                    <>
+                                                                        <Copy size={11} />
+                                                                        <span>Copy</span>
+                                                                    </>
                                                                 )}
                                                             </button>
                                                         </div>

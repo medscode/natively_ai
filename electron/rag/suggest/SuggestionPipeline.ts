@@ -67,9 +67,9 @@ export interface SuggestionProgressiveEvent {
     totalMs?: number;
 }
 
-const DEFAULT_COOLDOWN_MS = 5_000; // matches main.ts LIVE_SUGGEST_COOLDOWN_MS
-const RETRIEVAL_DEADLINE_MS = 300;
-const STALE_AFTER_MS = 8_000; // give up on an in-flight job after this even without a revision bump
+const DEFAULT_COOLDOWN_MS = 3_000;
+const RETRIEVAL_DEADLINE_MS = 1_500;
+const STALE_AFTER_MS = 8_000;
 
 /**
  * Filter out conversational banter and filler so the copilot only triggers
@@ -184,12 +184,9 @@ export class SuggestionPipeline {
         // Pull KB context. Guarded by revision so a faster-than-retrieval next
         // utterance doesn't cause stale chunks to feed the LLM.
         const { getActiveClientCase } = await import('./KnowledgeBaseGate');
-        const { KnowledgeBaseManager } = await import('../KnowledgeBaseManager');
+        const { KnowledgeBaseManager, SHARED_KB_CASE_ID } = await import('../KnowledgeBaseManager');
         const active = getActiveClientCase();
-        if (!active.clientCaseId) {
-            this.emit(appState, { kind: 'done', revision, question: input.question, text: '' });
-            return;
-        }
+        const caseId = active.clientCaseId || SHARED_KB_CASE_ID;
 
         // Wire pipeline if needed.
         const kb = KnowledgeBaseManager.getInstance();
@@ -200,18 +197,13 @@ export class SuggestionPipeline {
             if (vs && ep) kb.setPipeline(vs, ep);
         }
 
-        // Retrieval with a soft deadline.
-        // Use authority-aware retrieval across shared legal KB and active case
-        // ── Phase 2: Query Rewriting (HyDE-Lite) ──────────────────────────
-        // Fire rewrite in parallel with raw retrieval — doesn't add latency
+        // Retrieval with relaxed similarity for informal layman speech (0.20)
         const llmHelperForRewrite = appState.processingHelper.getLLMHelper();
-        const retrievalOpts = input.templateType === 'lawyer'
-            ? { limit: 4, minSimilarity: 0.35 }
-            : { limit: 4, minSimilarity: 0.35 };
+        const retrievalOpts = { limit: 6, minSimilarity: 0.20 };
 
         const [rawRetrievalResult, rewriteResult] = await Promise.all([
             Promise.race([
-                kb.querySharedAndCaseKB(input.question, active.clientCaseId, retrievalOpts),
+                kb.querySharedAndCaseKB(input.question, caseId, retrievalOpts),
                 new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
             ]),
             rewriteQuery(input.question, llmHelperForRewrite).catch((): null => null),
@@ -223,7 +215,7 @@ export class SuggestionPipeline {
         if (rewriteResult?.wasRewritten && rewriteResult.rewrittenQuery !== input.question && rawRetrievalResult) {
             try {
                 const rewrittenRetrieval = await Promise.race([
-                    kb.querySharedAndCaseKB(rewriteResult.rewrittenQuery, active.clientCaseId, retrievalOpts),
+                    kb.querySharedAndCaseKB(rewriteResult.rewrittenQuery, caseId, retrievalOpts),
                     new Promise<null>((resolve) => setTimeout(() => resolve(null), RETRIEVAL_DEADLINE_MS)),
                 ]);
                 if (rewrittenRetrieval?.chunks?.length > 0 && rawRetrievalResult) {
@@ -260,28 +252,26 @@ export class SuggestionPipeline {
             ? ((retrievalResult && (retrievalResult as any).formattedContext) || chunks.map((c: any, i: number) =>
                 `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
             ).join('\n\n'))
-            : 'No specific knowledge base context found for this query. Provide a direct, professional legal answer based on general Indian law principles.';
-
-        if (!hasChunks) {
-            console.log(`[SuggestionPipeline] No specific chunks for q="${input.question.slice(0, 40)}…" — generating general legal suggestion`);
-        }
+            : 'No specific uploaded case chunks found. Apply general Indian statutory law (e.g. Transfer of Property Act 1882, Indian Succession Act 1925, Hindu Succession Act 1956, Indian Trusts Act 1882, FEMA, CPC) and conflict-of-laws principles.';
 
         const combinedContext = [
             input.transcriptContext ? `Recent conversation transcript:\n${input.transcriptContext.slice(0, 800)}` : '',
             `Retrieved Knowledge Base Context:\n${ctxBlock}`,
         ].filter(Boolean).join('\n\n');
 
-        const legalSystemPrompt = `You are an expert legal co-counsel whispering spoken cues to an advocate during a live consultation.
-CRITICAL RULES:
-1. MAXIMUM 50-70 WORDS TOTAL. Zero fluff, zero preamble. The lawyer has seconds to glance and speak aloud.
-2. SPOKEN DIRECT ADVICE: Start immediately with the exact words the lawyer should say to the client.
-3. STRUCTURE:
-   • Direct advice: 1 punchy sentence ready to speak aloud.
-   • Statutory options: 1-2 bullet points with statutory provisions (e.g. "Gift deed u/s 122 TPA vs. Will under Indian Succession Act").
-   • Clarify trigger: 1 question the lawyer should ask the client next (e.g. "Ask client: Is the property immovable and what is the daughter's tax residency?").
-   • Sources: [Act Name, Sec. X]
-4. CITATION NOTATION: Use Indian legal notation: write "Sec." or "Section" (e.g. "Sec. 126 of Transfer of Property Act, 1882", "Sec. 5 of Indian Trusts Act, 1882"). NEVER use the "§" symbol.
-5. If relying on secondary or unverified sources (marked with ⚠️), note [Needs Verification].`;
+        const legalSystemPrompt = `You are a senior Indian-law co-counsel sitting beside an advocate during a live client consultation. The advocate has 2-3 seconds to glance at your output and speak aloud. Output EXACTLY in this format, no preamble, no apology, no greeting:
+
+Line 1 (direct words to speak aloud): 1 concise sentence starting with actionable advice. This is what the lawyer should say to the client right now. Plain spoken language.
+
+Line 2 (statutory hook): 1 concise sentence citing the specific statutory mechanism (e.g. "Under Sec. 122 of the Transfer of Property Act, 1882, a gift of immovable property requires a registered instrument." or "Under French private international law lex situs applies to immovable property in France, while Indian succession laws apply to movable assets."). Use "Sec." — NEVER the § symbol.
+
+Line 3 (clarify trigger): One question for the advocate to ask the client next (prefix "Ask client: ").
+
+Line 4 (sources): "[Act Name, Sec. X]" or "[Document Title]". If relying on general statutory principles, cite the relevant Act.
+
+GROUNDING RULES:
+- Never output "Here is what to say", "I would suggest", "Based on the context", or any meta-framing.
+- 50-70 words total. Hard cap.`;
 
         // Stream the LLM. Universally routes across Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Ollama
         const llmHelper = appState.processingHelper.getLLMHelper();
