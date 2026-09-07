@@ -73,6 +73,18 @@ export class RAGManager {
         }).catch(() => { /* non-critical, suppress */ });
     }
 
+    getLLM(): LLMHelper | null {
+        if (this.llmHelper) return this.llmHelper;
+        try {
+            const { appState } = require('../main');
+            if (appState?.processingHelper) {
+                this.llmHelper = appState.processingHelper.getLLMHelper();
+                return this.llmHelper;
+            }
+        } catch { /* ignore */ }
+        return null;
+    }
+
     /**
      * Set LLM helper for generating responses
      */
@@ -288,8 +300,18 @@ export class RAGManager {
         }
         console.log('[RAGManager.queryKB] caseId=', caseId, 'query=', query);
 
-        // Retrieve chunks from the shared legal KB + active case
-        const result = await kb.querySharedAndCaseKB(query, caseId, { limit: options?.topK ?? 6 });
+        const llm = this.getLLM();
+
+        // Retrieve chunks from the shared legal KB + active case with 2.5s deadman race
+        let result: any = null;
+        try {
+            result = await Promise.race([
+                kb.querySharedAndCaseKB(query, caseId, { limit: options?.topK ?? 6, minSimilarity: 0.20 }),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+            ]);
+        } catch (err: any) {
+            console.warn('[RAGManager.queryKB] Retrieval error:', err?.message);
+        }
         const chunks = (result && (result as any).chunks) || [];
         console.log('[RAGManager.queryKB] retrieved', chunks.length, 'chunks (shared + case)');
 
@@ -327,9 +349,9 @@ Structure:
 2. STATUTORY / LEGAL OPTIONS: 2 concise bullet points with legal mechanisms.
 3. NEXT QUESTION: 1 clarifying question the lawyer can ask the client.
 4. Sources (with URLs):`;
-                        if (this.llmHelper) {
+                        if (llm) {
                             try {
-                                const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+                                const stream = llm.streamChatWithGemini(prompt, undefined, undefined, true, options?.abortSignal);
                                 for await (const chunk of stream) {
                                     if (options?.abortSignal?.aborted) break;
                                     yield { type: 'chunk', text: chunk };
@@ -347,7 +369,7 @@ Structure:
             }
 
             // General statutory legal reasoning fallback (when no specific chunk matched in local KB)
-            if (this.llmHelper) {
+            if (llm) {
                 const prompt = `You are an expert legal co-counsel assisting an Indian advocate during a consultation.
 No specific case document was matched for this query in the local uploaded files.
 Provide a direct, authoritative legal answer based on general statutory law, Indian legal principles, and conflict of laws (private international law) where applicable.
@@ -363,7 +385,7 @@ STRUCTURE YOUR ANSWER EXACTLY AS FOLLOWS:
 Note: Clearly mention at the end that this is based on general statutory principles.`;
 
                 try {
-                    const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+                    const stream = llm.streamChatWithGemini(prompt, undefined, undefined, true, options?.abortSignal);
                     for await (const chunk of stream) {
                         if (options?.abortSignal?.aborted) break;
                         yield { type: 'chunk', text: chunk };
@@ -372,7 +394,7 @@ Note: Clearly mention at the end that this is based on general statutory princip
                     yield { type: 'chunk', text: `[Legal response note: ${e?.message || 'streaming failed'}]` };
                 }
             } else {
-                yield { type: 'chunk', text: `I do not have specific case documents for this query. You can ask for general legal principles or enable web search in Settings.` };
+                yield { type: 'chunk', text: `I do not have specific case documents for this query. You can ask for general legal principles or configure your AI API key in Settings.` };
             }
             yield { type: 'done' };
             return;
@@ -429,15 +451,15 @@ STRUCTURE YOUR ANSWER IN THIS EXACT FORMAT:
 
 Answer:`;
 
-        if (!this.llmHelper) {
-            yield { type: 'chunk', text: 'LLM helper not initialized.' };
+        if (!llm) {
+            yield { type: 'chunk', text: 'AI assistant is not configured. Please add an API key in Settings.' };
             yield { type: 'done' };
             return;
         }
 
         // Stream the response
         try {
-            const stream = this.llmHelper.streamChatWithGemini(prompt, undefined, undefined, true);
+            const stream = llm.streamChatWithGemini(prompt, undefined, undefined, true, options?.abortSignal);
             for await (const chunk of stream) {
                 if (options?.abortSignal?.aborted) break;
                 yield { type: 'chunk', text: chunk };

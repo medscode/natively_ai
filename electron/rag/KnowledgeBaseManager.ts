@@ -439,25 +439,26 @@ export class KnowledgeBaseManager {
         const minSimilarity = opts?.minSimilarity ?? 0.30;
 
         try {
-            // Fast race: if cloud embedding takes > 2500ms (e.g. rate limit/network cooldown),
+            // Fast race: if cloud embedding takes > 2000ms (e.g. rate limit/network cooldown),
             // immediately proceed with local 384d MiniLM embedding
             let embeddingResult = await Promise.race([
                 this.embeddingPipeline.getEmbeddingWithFallback(query),
-                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+                new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
             ]).catch(() => null);
 
             let embedding = embeddingResult?.embedding;
             let spaceKey = embeddingResult?.space || this.embeddingPipeline.getActiveSpaceKey();
 
-            // If primary cloud embedding timed out or failed, use local 384d provider directly
+            // If primary cloud embedding timed out or failed, use local 384d provider via pipeline
             if (!embedding) {
                 try {
-                    const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
-                    const localProvider = new LocalEmbeddingProvider();
-                    const localQueryEmbed = await localProvider.embedQuery(query);
+                    const localQueryEmbed = await Promise.race([
+                        this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+                    ]).catch(() => null);
                     if (localQueryEmbed && localQueryEmbed.length === 384) {
                         embedding = localQueryEmbed;
-                        spaceKey = localProvider.space;
+                        spaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
                     }
                 } catch (e: any) {
                     console.warn('[KnowledgeBaseManager] Local fallback embedding failed:', e?.message);
@@ -468,30 +469,42 @@ export class KnowledgeBaseManager {
                 return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
             }
 
-            // Search shared KB
-            let sharedResults = await this.vectorStore.searchSimilar(embedding, {
-                meetingId: SHARED_KB_CASE_ID,
-                limit: limit * 2, // over-fetch for authority reranking
-                minSimilarity,
-                spaceKey,
-            });
+            // Search shared KB with timeout protection
+            let sharedResults: any[] = [];
+            try {
+                sharedResults = await Promise.race([
+                    this.vectorStore.searchSimilar(embedding, {
+                        meetingId: SHARED_KB_CASE_ID,
+                        limit: limit * 2, // over-fetch for authority reranking
+                        minSimilarity,
+                        spaceKey,
+                    }),
+                    new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+                ]);
+            } catch (err: any) {
+                console.warn('[KnowledgeBaseManager] Shared KB search error:', err?.message);
+            }
 
             // Resilience fallback: if primary space returned 0 chunks from shared KB,
             // query using the local 384d MiniLM vector space (where the pre-indexed legal statutes live)
             if (sharedResults.length === 0) {
                 try {
-                    const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
-                    const localProvider = new LocalEmbeddingProvider();
-                    const localQueryEmbed = await localProvider.embedQuery(query);
+                    const localQueryEmbed = await Promise.race([
+                        this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
+                        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+                    ]).catch(() => null);
                     if (localQueryEmbed && localQueryEmbed.length === 384) {
-                        const localSpaceKey = localProvider.space;
-                        const fallbackSharedResults = await this.vectorStore.searchSimilar(localQueryEmbed, {
-                            meetingId: SHARED_KB_CASE_ID,
-                            limit: limit * 2,
-                            minSimilarity: Math.min(minSimilarity, 0.25),
-                            spaceKey: localSpaceKey,
-                        });
-                        if (fallbackSharedResults.length > 0) {
+                        const localSpaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
+                        const fallbackSharedResults = await Promise.race([
+                            this.vectorStore.searchSimilar(localQueryEmbed, {
+                                meetingId: SHARED_KB_CASE_ID,
+                                limit: limit * 2,
+                                minSimilarity: Math.min(minSimilarity, 0.25),
+                                spaceKey: localSpaceKey,
+                            }),
+                            new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+                        ]);
+                        if (fallbackSharedResults && fallbackSharedResults.length > 0) {
                             console.log(`[KnowledgeBaseManager] Retrieved ${fallbackSharedResults.length} chunks from local 384d shared KB space`);
                             sharedResults = fallbackSharedResults;
                         }
@@ -504,27 +517,38 @@ export class KnowledgeBaseManager {
             // Search active case (if any and different from shared)
             let caseResults: any[] = [];
             if (activeCaseId && activeCaseId !== SHARED_KB_CASE_ID) {
-                caseResults = await this.vectorStore.searchSimilar(embedding, {
-                    meetingId: activeCaseId,
-                    limit,
-                    minSimilarity,
-                    spaceKey,
-                });
+                try {
+                    caseResults = await Promise.race([
+                        this.vectorStore.searchSimilar(embedding, {
+                            meetingId: activeCaseId,
+                            limit,
+                            minSimilarity,
+                            spaceKey,
+                        }),
+                        new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+                    ]);
+                } catch (err: any) {
+                    console.warn('[KnowledgeBaseManager] Case KB search error:', err?.message);
+                }
 
                 if (caseResults.length === 0) {
                     try {
-                        const { LocalEmbeddingProvider } = require('./providers/LocalEmbeddingProvider');
-                        const localProvider = new LocalEmbeddingProvider();
-                        const localQueryEmbed = await localProvider.embedQuery(query);
+                        const localQueryEmbed = await Promise.race([
+                            this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
+                            new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
+                        ]).catch(() => null);
                         if (localQueryEmbed && localQueryEmbed.length === 384) {
-                            const localSpaceKey = localProvider.space;
-                            const fallbackCase = await this.vectorStore.searchSimilar(localQueryEmbed, {
-                                meetingId: activeCaseId,
-                                limit,
-                                minSimilarity: Math.min(minSimilarity, 0.25),
-                                spaceKey: localSpaceKey,
-                            });
-                            if (fallbackCase.length > 0) {
+                            const localSpaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
+                            const fallbackCase = await Promise.race([
+                                this.vectorStore.searchSimilar(localQueryEmbed, {
+                                    meetingId: activeCaseId,
+                                    limit,
+                                    minSimilarity: Math.min(minSimilarity, 0.25),
+                                    spaceKey: localSpaceKey,
+                                }),
+                                new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+                            ]);
+                            if (fallbackCase && fallbackCase.length > 0) {
                                 caseResults = fallbackCase;
                             }
                         }
