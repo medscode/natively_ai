@@ -10,6 +10,8 @@
 // Stream listeners + RAF batching reuse patterns from GlobalChatOverlay.tsx.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useStreamBuffer } from '../hooks/useStreamBuffer';
 import {
     X, Copy, Check, Globe, ArrowUp, BookOpen, Sparkles, Plus,
@@ -89,11 +91,26 @@ const UserMessage: React.FC<{ content: string }> = ({ content }) => (
 
 const CitationBadge: React.FC<{ c: Citation }> = ({ c }) => {
     const isNeedsVerification = c.title?.includes('[Needs Verification]') || c.title?.startsWith('⚠️');
-    const isAuthoritative = c.title?.startsWith('📖');
+    // Clean up raw prefixes / suffixes and underscores
+    let displayTitle = (c.title || c.sourceType || '')
+        .replace(/^[📖⚠️\s]+/, '')
+        .replace(/\[Needs Verification\]/gi, '')
+        .replace(/\s*\(\d+\.\d+\)$/, '')
+        .replace(/[_-]+/g, ' ')
+        .trim();
+
+    displayTitle = displayTitle.replace(/\b\w/g, (ch) => ch.toUpperCase());
+    displayTitle = displayTitle
+        .replace(/The Code Of Civil Procedure/i, 'Code of Civil Procedure')
+        .replace(/The Indian Succession Act/i, 'Indian Succession Act')
+        .replace(/The Transfer Of Property Act/i, 'Transfer of Property Act')
+        .replace(/The Hindu Succession Act/i, 'Hindu Succession Act')
+        .replace(/The Registration Act/i, 'Registration Act');
+
     return (
         <span
-            title={c.snippet ? `${c.title}\n\nDocument Excerpt:\n${c.snippet}` : c.title}
-            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-medium transition-colors ${
+            title={c.snippet ? `${displayTitle}\n\nDocument Excerpt:\n${c.snippet}` : displayTitle}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium transition-colors ${
                 c.sourceType === 'web'
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                     : isNeedsVerification
@@ -102,7 +119,7 @@ const CitationBadge: React.FC<{ c: Citation }> = ({ c }) => {
             }`}
         >
             {c.sourceType === 'web' ? <Globe size={11} strokeWidth={2.5} /> : <BookOpen size={11} strokeWidth={2.5} />}
-            <span className="max-w-[320px] truncate">{c.title || c.sourceType}</span>
+            <span className="max-w-[280px] truncate">{displayTitle}</span>
             {typeof c.similarity === 'number' && (
                 <span className="opacity-60 font-mono text-[9px]">({c.similarity.toFixed(2)})</span>
             )}
@@ -126,6 +143,11 @@ const AssistantMessage: React.FC<{
         }
     };
 
+    // Deduplicate citations by display title so duplicate source badges never spam
+    const uniqueCitations = Array.from(
+        new Map((citations || []).map((c) => [c.title?.replace(/[📖⚠️]/g, '').trim(), c])).values()
+    );
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 8 }}
@@ -133,16 +155,20 @@ const AssistantMessage: React.FC<{
             transition={{ duration: 0.15 }}
             className="flex flex-col items-start mb-6"
         >
-            <div className="text-white text-[15px] leading-relaxed max-w-[85%]">
-                {content}
-                {citations && citations.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                        {citations.map((c) => <CitationBadge key={c.id} c={c} />)}
+            <div className="text-white text-[14px] leading-relaxed max-w-[92%] w-full">
+                <div className="prose prose-invert max-w-none text-white/95 text-[14px] leading-relaxed space-y-2 [&_h3]:text-[15px] [&_h3]:font-semibold [&_h3]:text-indigo-200 [&_h3]:mt-3 [&_h3]:mb-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1 [&_li]:text-white/90 [&_strong]:text-white [&_strong]:font-semibold [&_p]:my-1">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {content}
+                    </ReactMarkdown>
+                </div>
+                {uniqueCitations.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5 pt-2 border-t border-white/10">
+                        {uniqueCitations.map((c) => <CitationBadge key={c.id} c={c} />)}
                     </div>
                 )}
                 {isStreaming && (
                     <motion.span
-                        className="inline-block w-0.5 h-4 bg-white ml-0.5 align-middle"
+                        className="inline-block w-1.5 h-3.5 bg-indigo-400 ml-0.5 align-middle"
                         animate={{ opacity: [1, 0] }}
                         transition={{ duration: 0.5, repeat: Infinity }}
                     />
@@ -151,10 +177,10 @@ const AssistantMessage: React.FC<{
             {!isStreaming && content && (
                 <button
                     onClick={handleCopy}
-                    className="flex items-center gap-2 mt-3 text-[13px] text-white/50 hover:text-white/80 transition-colors"
+                    className="flex items-center gap-1.5 mt-2.5 text-[12px] text-white/50 hover:text-white/80 transition-colors"
                 >
-                    {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                    {copied ? 'Copied' : 'Copy message'}
+                    {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+                    <span>{copied ? 'Copied' : 'Copy message'}</span>
                 </button>
             )}
         </motion.div>
@@ -933,7 +959,9 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                                 {/* Citations — badges below the bubble */}
                                                 {s.citations && s.citations.length > 0 && (
                                                     <div className="mt-2 flex flex-wrap gap-1.5">
-                                                        {s.citations.map(c => <CitationBadge key={c.id} c={c} />)}
+                                                        {Array.from(new Map(s.citations.map(c => [c.title?.replace(/[📖⚠️]/g, '').trim(), c])).values()).map(c => (
+                                                            <CitationBadge key={c.id} c={c} />
+                                                        ))}
                                                     </div>
                                                 )}
 

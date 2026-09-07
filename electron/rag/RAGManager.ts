@@ -370,19 +370,25 @@ Structure:
 
             // General statutory legal reasoning fallback (when no specific chunk matched in local KB)
             if (llm) {
-                const prompt = `You are an expert legal co-counsel assisting an Indian advocate during a consultation.
-No specific case document was matched for this query in the local uploaded files.
-Provide a direct, authoritative legal answer based on general statutory law, Indian legal principles, and conflict of laws (private international law) where applicable.
+                const prompt = `You are an expert legal co-counsel assisting an Indian advocate during a client consultation.
+Provide a direct, authoritative legal answer in clean Markdown based on general Indian statutory law, legal principles, and private international law where applicable.
 
 QUESTION:
 ${query}
 
-STRUCTURE YOUR ANSWER EXACTLY AS FOLLOWS:
-1. DIRECT SPOKEN ANSWER: 1-2 punchy sentences the lawyer can speak immediately to the client.
-2. STATUTORY MECHANISMS & ANALYSIS: 2-3 concise bullet points citing relevant Acts & Sections (use "Sec." or "Section", NEVER "§"). (E.g., Transfer of Property Act 1882, Indian Succession Act 1925, Foreign Exchange Management Act, or cross-border lex situs principles).
-3. CLARIFYING QUESTION: 1 specific follow-up question the lawyer should ask the client to establish jurisdiction, residency, or testamentary intent.
+FORMAT YOUR ANSWER IN BEAUTIFUL MARKDOWN:
 
-Note: Clearly mention at the end that this is based on general statutory principles.`;
+### Direct Answer
+[1-2 clear, punchy sentences providing the direct answer ready for the lawyer to speak to the client]
+
+### Statutory Analysis & Legal Provisions
+- **[Applicable Act & Section]**: [Concise explanation of the relevant statutory mechanism. Always write "Sec." or "Section" (e.g. "Sec. 122 of Transfer of Property Act, 1882", "Sec. 5 of Indian Succession Act, 1925"). NEVER use the "§" symbol.]
+- **[Legal Principle / Lex Situs]**: [Explain applicable jurisdiction, registration, or tax implications.]
+
+### Clarifying Questions for Client
+- [1-2 specific follow-up questions the lawyer should ask the client next to clarify facts or jurisdiction]
+
+Note: Always write in English. Clearly mention at the end that this is based on general statutory principles.`;
 
                 try {
                     const stream = llm.streamChatWithGemini(prompt, undefined, undefined, true, options?.abortSignal);
@@ -400,21 +406,30 @@ Note: Clearly mention at the end that this is based on general statutory princip
             return;
         }
 
-        // Yield citations up-front so the renderer can render badges
-        const citations = chunks.map((c: any, idx: number) => ({
-            id: c.id != null ? String(c.id) : `chunk-${idx}`,
-            sourceType: c.sourceCategory ?? 'file',
-            title: c.needsVerification
-                ? `⚠️ ${c.sourceTitle} [Needs Verification]`
-                : `📖 ${c.sourceTitle}`,
-            similarity: c.authorityScore,
-            snippet: (c.text || '').slice(0, 250),
-        }));
+        // Deduplicate citations by unique clean title so badges never repeat
+        const { cleanDocumentTitle } = await import('./KnowledgeBaseManager');
+        const uniqueCitationsMap = new Map<string, any>();
+        for (const c of chunks) {
+            const rawTitle = c.sourceTitle || 'Legal Knowledge Base';
+            const cleanTitle = cleanDocumentTitle(rawTitle);
+            if (!uniqueCitationsMap.has(cleanTitle)) {
+                uniqueCitationsMap.set(cleanTitle, {
+                    id: c.id != null ? String(c.id) : `chunk-${uniqueCitationsMap.size}`,
+                    sourceType: c.sourceCategory ?? 'file',
+                    title: c.needsVerification
+                        ? `⚠️ ${cleanTitle} [Needs Verification]`
+                        : `📖 ${cleanTitle}`,
+                    similarity: c.authorityScore,
+                    snippet: (c.text || '').slice(0, 250),
+                });
+            }
+        }
+        const citations = Array.from(uniqueCitationsMap.values());
         yield { type: 'citations', citations };
 
         // Build prompt with retrieved context
         const formattedContext = (result && (result as any).formattedContext) || chunks.map((c: any, idx: number) =>
-            `[${idx + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
+            `[${idx + 1} — ${cleanDocumentTitle(c.sourceTitle || '')} (${c.sourceCategory})]\n${c.text || ''}`
         ).join('\n\n');
 
         // Optional live transcript block
@@ -434,8 +449,8 @@ Note: Clearly mention at the end that this is based on general statutory princip
             }
         }
 
-        const prompt = `You are an expert legal co-counsel assisting a lawyer with knowledge base retrieval.
-Use the following retrieved context from the legal knowledge base to answer the question thoroughly.
+        const prompt = `You are an expert legal co-counsel assisting an Indian advocate during a consultation.
+Use the following retrieved context from the legal knowledge base to answer the question thoroughly and concisely in clean Markdown.
 
 Retrieved Legal Knowledge:
 ${formattedContext}${liveBlock}
@@ -443,13 +458,19 @@ ${formattedContext}${liveBlock}
 QUESTION:
 ${query}
 
-STRUCTURE YOUR ANSWER IN THIS EXACT FORMAT:
-1. DIRECT ANSWER (BOTTOM LINE): Start with a clear 1-2 sentence direct answer that immediately answers the user's question.
-2. KEY POINTS & DETAILED EXPLANATION: Provide clear, structured bullet points explaining the legal mechanics, prerequisites, exceptions, or analysis.
-3. CITATION CONVENTION: Use the Indian legal notation format: write "Sec." or "Section" (e.g. "Sec. 126 of the Transfer of Property Act, 1882", "Sec. 8 of the Hindu Succession Act, 1956", "Order XXXIX Rule 1 of CPC, 1908"). NEVER use the "§" symbol.
-4. EXACT SOURCE CITATIONS: Name the exact Act, statute, or document title for every cited provision. If citing a secondary source (⚠️), note that it requires verification.
+FORMAT YOUR ANSWER IN BEAUTIFUL MARKDOWN:
 
-Answer:`;
+### Direct Answer
+[1-2 clear, punchy sentences providing the direct answer ready for the lawyer to speak to the client]
+
+### Statutory Analysis & Key Points
+- **[Act Name, Sec. X]**: [Explain the exact legal rule, prerequisite, exception, or effect. Always write "Sec." or "Section" (e.g. "Sec. 122 of the Transfer of Property Act, 1882", "Sec. 5 of the Indian Succession Act, 1925"). NEVER use the "§" symbol.]
+- **[Next Provision / Analysis]**: [Additional legal mechanics, procedural steps, or cross-border rules.]
+
+### Clarifying Questions & Tactical Advice
+- [1-2 practical follow-up questions or tactical steps the advocate should discuss with the client next]
+
+Important: Always respond in English. Do NOT output meta-headers like "CITATION CONVENTION" or instructions.`;
 
         if (!llm) {
             yield { type: 'chunk', text: 'AI assistant is not configured. Please add an API key in Settings.' };

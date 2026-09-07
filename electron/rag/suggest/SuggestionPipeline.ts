@@ -236,21 +236,30 @@ export class SuggestionPipeline {
         if (abort.signal.aborted || this.rev.isStale(revision)) return;
 
         const chunks = (retrievalResult && (retrievalResult as any).chunks) || [];
-        const citations = chunks.map((c: any, idx: number) => ({
-            id: c.id != null ? String(c.id) : `chunk-${idx}`,
-            sourceType: c.sourceCategory ?? 'file',
-            title: c.needsVerification
-                ? `⚠️ ${c.sourceTitle} [Needs Verification]`
-                : `📖 ${c.sourceTitle}`,
-            similarity: c.authorityScore,
-            snippet: (c.text || '').slice(0, 250),
-        }));
+        const { cleanDocumentTitle } = await import('../KnowledgeBaseManager');
+        const uniqueCitationsMap = new Map<string, any>();
+        for (const c of chunks) {
+            const rawTitle = c.sourceTitle || 'Legal Knowledge Base';
+            const cleanTitle = cleanDocumentTitle(rawTitle);
+            if (!uniqueCitationsMap.has(cleanTitle)) {
+                uniqueCitationsMap.set(cleanTitle, {
+                    id: c.id != null ? String(c.id) : `chunk-${uniqueCitationsMap.size}`,
+                    sourceType: c.sourceCategory ?? 'file',
+                    title: c.needsVerification
+                        ? `⚠️ ${cleanTitle} [Needs Verification]`
+                        : `📖 ${cleanTitle}`,
+                    similarity: c.authorityScore,
+                    snippet: (c.text || '').slice(0, 250),
+                });
+            }
+        }
+        const citations = Array.from(uniqueCitationsMap.values());
 
         // Build the prompt with authority-labeled context and strict Indian legal notation
         const hasChunks = chunks.length > 0;
         const ctxBlock = hasChunks
             ? ((retrievalResult && (retrievalResult as any).formattedContext) || chunks.map((c: any, i: number) =>
-                `[${i + 1} — ${c.sourceTitle} (${c.sourceCategory})]\n${c.text || ''}`
+                `[${i + 1} — ${cleanDocumentTitle(c.sourceTitle || '')} (${c.sourceCategory})]\n${c.text || ''}`
             ).join('\n\n'))
             : 'No specific uploaded case chunks found. Apply general Indian statutory law (e.g. Transfer of Property Act 1882, Indian Succession Act 1925, Hindu Succession Act 1956, Indian Trusts Act 1882, FEMA, CPC) and conflict-of-laws principles.';
 
@@ -259,19 +268,22 @@ export class SuggestionPipeline {
             `Retrieved Knowledge Base Context:\n${ctxBlock}`,
         ].filter(Boolean).join('\n\n');
 
-        const legalSystemPrompt = `You are a senior Indian-law co-counsel sitting beside an advocate during a live client consultation. The advocate has 2-3 seconds to glance at your output and speak aloud. Output EXACTLY in this format, no preamble, no apology, no greeting:
+        const legalSystemPrompt = `You are a senior Indian-law co-counsel assisting an advocate during a live client consultation. The advocate has 2-3 seconds to glance at your suggestion card and speak aloud.
+ALWAYS write in English.
 
-Line 1 (direct words to speak aloud): 1 concise sentence starting with actionable advice. This is what the lawyer should say to the client right now. Plain spoken language.
+Format your output in 3 distinct, crisp lines without meta-framing:
 
-Line 2 (statutory hook): 1 concise sentence citing the specific statutory mechanism (e.g. "Under Sec. 122 of the Transfer of Property Act, 1882, a gift of immovable property requires a registered instrument." or "Under French private international law lex situs applies to immovable property in France, while Indian succession laws apply to movable assets."). Use "Sec." — NEVER the § symbol.
+**What to Say:** [1 concise, spoken-ready sentence the advocate can speak directly to the client right now.]
 
-Line 3 (clarify trigger): One question for the advocate to ask the client next (prefix "Ask client: ").
+**Statutory Basis:** [1 concise sentence citing the statutory mechanism using "Sec." or "Section", NEVER "§". E.g., "Under Sec. 122 of the Transfer of Property Act, 1882, a gift of immovable property requires a registered deed." or "Under private international law lex situs principles, immovable property in France is governed by French succession law."]
 
-Line 4 (sources): "[Act Name, Sec. X]" or "[Document Title]". If relying on general statutory principles, cite the relevant Act.
+**Ask Client:** [One specific follow-up question the advocate should ask the client next.]
 
 GROUNDING RULES:
-- Never output "Here is what to say", "I would suggest", "Based on the context", or any meta-framing.
-- 50-70 words total. Hard cap.`;
+- ALWAYS respond in English.
+- Never output apologies, meta-commentary like "I could not find information in documents", or greetings.
+- If the client's spoken utterance was brief or informal, infer the underlying legal topic (property, gift, inheritance, succession, trust, taxes, dispute) and provide direct proactive guidance.
+- Total length: 45-75 words.`;
 
         // Stream the LLM. Universally routes across Gemini, OpenAI, Claude, DeepSeek, Groq, LiteLLM, Ollama
         const llmHelper = appState.processingHelper.getLLMHelper();

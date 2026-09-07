@@ -47,6 +47,32 @@ export const SOURCE_PRIORITY_ORDER: SourceCategory[] = [
     'articles', 'whitepapers', 'news',
 ];
 
+export function cleanDocumentTitle(rawTitle: string): string {
+    if (!rawTitle) return 'Legal Knowledge Base';
+    let clean = rawTitle
+        .replace(/^\[+|\]+$/g, '')
+        .replace(/\.(pdf|docx|txt|md|markdown|json|csv)$/i, '')
+        .replace(/^[_\s-]+|[_\s-]+$/g, '')
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Normalize casing and clean up common act names
+    clean = clean.replace(/\b\w/g, (c) => c.toUpperCase());
+    clean = clean
+        .replace(/The Code Of Civil Procedure/i, 'Code of Civil Procedure')
+        .replace(/The Indian Succession Act/i, 'Indian Succession Act')
+        .replace(/The Transfer Of Property Act/i, 'Transfer of Property Act')
+        .replace(/The Hindu Succession Act/i, 'Hindu Succession Act')
+        .replace(/The Registration Act/i, 'Registration Act')
+        .replace(/The Indian Contract Act/i, 'Indian Contract Act')
+        .replace(/The Specific Relief Act/i, 'Specific Relief Act')
+        .replace(/The Bharatiya Nyaya Sanhita/i, 'Bharatiya Nyaya Sanhita')
+        .replace(/The Bharatiya Nagarik Suraksha Sanhita/i, 'Bharatiya Nagarik Suraksha Sanhita')
+        .replace(/The Bharatiya Sakshya Adhiniyam/i, 'Bharatiya Sakshya Adhiniyam');
+    return clean;
+}
+
 export interface KnowledgeSource {
     id: string;
     clientCaseId: string;
@@ -562,7 +588,6 @@ export class KnowledgeBaseManager {
 
             const resolveSourceMeta = (meetingId: string): { authorityTier: AuthorityTier; sourceCategory: SourceCategory; title: string } => {
                 if (sourceMetadataCache.has(meetingId)) return sourceMetadataCache.get(meetingId)!;
-                // Default: if it's from the shared KB, look up knowledge_sources
                 let tier: AuthorityTier = 'bending';
                 let category: SourceCategory = 'articles';
                 let title = 'Unknown Source';
@@ -572,7 +597,6 @@ export class KnowledgeBaseManager {
                             `SELECT title, metadata_json FROM knowledge_sources WHERE client_case_id = ? ORDER BY created_at DESC`
                         ).all(meetingId);
                         if (sources.length > 0) {
-                            // Use the first source's metadata (all chunks for a meeting share the case ID)
                             for (const src of sources) {
                                 const meta = src.metadata_json ? JSON.parse(src.metadata_json) : {};
                                 if (meta.authority_tier) {
@@ -593,28 +617,42 @@ export class KnowledgeBaseManager {
                 return result;
             };
 
-            // Score and merge all results
+            // Score and merge all results with true document title resolution
             const allChunks: AuthorityScoredChunk[] = [];
 
             for (const chunk of [...sharedResults, ...caseResults]) {
+                const chunkText = chunk.text || chunk.cleaned_text || '';
+                const headerMatch = chunkText.match(/^\[([^\]\n>]+)(?:\s*>|\s*\])/);
+                const specificTitle = headerMatch && headerMatch[1] ? headerMatch[1].trim() : '';
+
                 const meta = resolveSourceMeta(chunk.meetingId);
-                const boost = AUTHORITY_BOOST[meta.sourceCategory] ?? 1.0;
+                const rawTitle = specificTitle || (chunk as any).title || meta.title;
+                const sourceTitle = cleanDocumentTitle(rawTitle);
+
+                // Refine category & authority tier from specific document title
+                let tier = meta.authorityTier;
+                let category = meta.sourceCategory;
+                const { tier: inferredTier, category: inferredCat } = KnowledgeBaseManager.inferAuthorityFromPath(sourceTitle);
+                if (inferredTier) tier = inferredTier;
+                if (inferredCat) category = inferredCat;
+
+                const boost = AUTHORITY_BOOST[category] ?? 1.0;
                 const authorityScore = (chunk.similarity || 0) * boost;
                 allChunks.push({
                     id: chunk.id,
                     meetingId: chunk.meetingId,
-                    text: chunk.text || chunk.cleaned_text || '',
+                    text: chunkText,
                     similarity: chunk.similarity || 0,
                     tokenCount: chunk.tokenCount || 0,
                     startMs: chunk.startMs || 0,
                     endMs: chunk.endMs || 0,
                     speaker: chunk.speaker || 'source',
                     chunkIndex: chunk.chunkIndex || 0,
-                    authorityTier: meta.authorityTier,
-                    sourceCategory: meta.sourceCategory,
-                    sourceTitle: meta.title,
+                    authorityTier: tier,
+                    sourceCategory: category,
+                    sourceTitle,
                     authorityScore,
-                    needsVerification: meta.authorityTier === 'bending',
+                    needsVerification: tier === 'bending',
                 });
             }
 
