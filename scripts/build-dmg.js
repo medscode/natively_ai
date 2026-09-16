@@ -55,45 +55,83 @@ async function main() {
     // 4. Ensure native dependencies and assets
     runStep('Verify Sharp & Native Assets', 'node scripts/ensure-sharp-mac-deps.js && node scripts/ensure-sqlite-vec.js');
 
-    // 5. Package into DMG with electron-builder
-    runStep('Package Electron DMG (arm64)', 'npx electron-builder --mac dmg --arm64');
+    // 5. Pre-packaging asset check
+    runStep('Verify Pre-packaged Assets', 'node scripts/verify-packaged-local-assets.mjs');
 
-    // 6. Verify DMG output
-    console.log(`\n========================================`);
-    console.log(`🔍 Verifying Release Artifacts...`);
-    console.log(`========================================`);
+    // 6. Package into .app bundle with electron-builder and ad-hoc inside-out codesign
+    runStep('Package Electron App Directory (arm64)', 'npx electron-builder --mac dir --arm64');
 
-    if (fs.existsSync(RELEASE_DIR)) {
-        const artifacts = fs.readdirSync(RELEASE_DIR).filter(f => f.endsWith('.dmg'));
-        if (artifacts.length === 0) {
-            console.error('❌ Error: No .dmg file found in release directory!');
-            process.exit(1);
-        }
-
-        for (const dmg of artifacts) {
-            const dmgPath = path.join(RELEASE_DIR, dmg);
-            const stats = fs.statSync(dmgPath);
-            const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
-            console.log(`✅ Created DMG: ${dmg} (${sizeMB} MB)`);
-            console.log(`   Location: ${dmgPath}`);
-        }
+    // 7. Verify .app bundle contents & codesign
+    const macAppPath = path.join(RELEASE_DIR, 'mac-arm64', 'Natively.app');
+    if (!fs.existsSync(macAppPath)) {
+        console.error(`❌ FATAL: Packaged app not found at ${macAppPath}`);
+        process.exit(1);
     }
 
-    // Verify .app codesign seal if mac folder exists
-    const macAppPath = path.join(RELEASE_DIR, 'mac-arm64', 'Natively.app');
-    if (fs.existsSync(macAppPath)) {
-        console.log(`\n🔒 Verifying Code Signature of packaged .app...`);
-        try {
-            const verifyOut = execSync(`codesign -vvv --deep --strict "${macAppPath}" 2>&1`, { encoding: 'utf8' });
-            console.log(`   ${verifyOut.trim() || 'Code signature is valid on disk.'}`);
-            console.log(`✅ Packaged .app passes deep codesign integrity check!`);
-        } catch (e) {
-            console.warn(`⚠️ Note on codesign verify:`, e.message);
-        }
+    runStep('Verify Packaged Assets in .app', `node scripts/verify-packaged-local-assets.mjs --app "${macAppPath}"`);
+
+    // Check Electron Framework existence and symlink
+    const electronFw = path.join(macAppPath, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework');
+    if (fs.existsSync(electronFw)) {
+        console.log(`✅ Electron Framework library verified: ${electronFw}`);
+    } else {
+        console.error(`❌ FATAL: Electron Framework library missing at ${electronFw}`);
+        process.exit(1);
+    }
+
+    // Verify .app codesign seal
+    console.log(`\n🔒 Verifying Code Signature of packaged .app...`);
+    try {
+        const verifyOut = execSync(`codesign -vvv --deep --strict "${macAppPath}" 2>&1`, { encoding: 'utf8' });
+        console.log(`   ${verifyOut.trim() || 'Code signature is valid on disk.'}`);
+        console.log(`✅ Packaged .app passes deep codesign integrity check!`);
+    } catch (e) {
+        console.warn(`⚠️ Note on codesign verify:`, e.message);
+    }
+
+    // 8. Build pristine shareable DMG via ditto staging and hdiutil create (preserves all framework symlinks)
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'package.json'), 'utf8'));
+    const version = pkg.version || '2.8.4';
+    const outDmg = path.join(RELEASE_DIR, `Natively-${version}-arm64.dmg`);
+
+    console.log(`\n========================================`);
+    console.log(`📦 Creating Pristine Shareable DMG (${path.basename(outDmg)})...`);
+    console.log(`========================================`);
+
+    const os = require('os');
+    const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'natively-dmg-'));
+    const stagedApp = path.join(stageDir, 'Natively.app');
+
+    try {
+        console.log(`Staging .app via ditto to preserve symlinks and signatures...`);
+        execSync(`ditto "${macAppPath}" "${stagedApp}"`, { stdio: 'inherit' });
+        fs.symlinkSync('/Applications', path.join(stageDir, 'Applications'));
+
+        if (fs.existsSync(outDmg)) fs.unlinkSync(outDmg);
+
+        console.log(`Generating compressed DMG with hdiutil...`);
+        execSync(`hdiutil create -volname "Natively" -srcfolder "${stageDir}" -ov -format UDZO "${outDmg}"`, { stdio: 'inherit' });
+    } finally {
+        fs.rmSync(stageDir, { recursive: true, force: true });
+    }
+
+    // 9. Verify Final DMG
+    if (fs.existsSync(outDmg)) {
+        const stats = fs.statSync(outDmg);
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(1);
+        console.log(`\n========================================`);
+        console.log(`✅ Successfully Created Shareable DMG:`);
+        console.log(`   File:     ${path.basename(outDmg)}`);
+        console.log(`   Size:     ${sizeMB} MB`);
+        console.log(`   Path:     ${outDmg}`);
+        console.log(`========================================`);
+    } else {
+        console.error('❌ Error: DMG creation failed!');
+        process.exit(1);
     }
 
     const totalSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`\n🎉 DMG build completed successfully in ${totalSeconds}s!\n`);
+    console.log(`\n🎉 DMG build and verification completed successfully in ${totalSeconds}s!\n`);
 }
 
 main();
