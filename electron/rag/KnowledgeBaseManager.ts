@@ -12,6 +12,7 @@ import { chunkTranscript } from './SemanticChunker';
 import type { Chunk } from './SemanticChunker';
 import { preprocessTranscript, type RawSegment } from './TranscriptPreprocessor';
 import { chunkLegalDocument, isStatutoryText } from './LegalDocumentChunker';
+import { CloudLegalRetriever } from './CloudLegalRetriever';
 
 // ── Shared KB Constants ────────────────────────────────────────────────
 
@@ -495,20 +496,39 @@ export class KnowledgeBaseManager {
                 return { chunks: [], formattedContext: '', authoritativeContext: '', bendingContext: '', citations: [] };
             }
 
-            // Search shared KB with timeout protection
-            let sharedResults: any[] = [];
-            try {
-                sharedResults = await Promise.race([
-                    this.vectorStore.searchSimilar(embedding, {
-                        meetingId: SHARED_KB_CASE_ID,
-                        limit: limit * 2, // over-fetch for authority reranking
+            // Search shared legal KB (Cloud PostgreSQL 16 + pgvector first, with fallback to local SQLite)
+            let cloudSharedChunks: AuthorityScoredChunk[] = [];
+            if (embedding && embedding.length === 768) {
+                try {
+                    const cloudRetriever = CloudLegalRetriever.getInstance();
+                    cloudSharedChunks = await cloudRetriever.search(embedding, {
+                        limit: limit * 2,
                         minSimilarity,
-                        spaceKey,
-                    }),
-                    new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
-                ]);
-            } catch (err: any) {
-                console.warn('[KnowledgeBaseManager] Shared KB search error:', err?.message);
+                    });
+                    if (cloudSharedChunks.length > 0) {
+                        console.log(`[KnowledgeBaseManager] Retrieved ${cloudSharedChunks.length} chunks from Cloud PostgreSQL pgvector`);
+                    }
+                } catch (cloudErr: any) {
+                    console.warn('[KnowledgeBaseManager] Cloud legal search note (falling back to local):', cloudErr?.message);
+                }
+            }
+
+            // If cloud returned no chunks (offline / unconfigured), search local SQLite
+            let sharedResults: any[] = [];
+            if (cloudSharedChunks.length === 0) {
+                try {
+                    sharedResults = await Promise.race([
+                        this.vectorStore.searchSimilar(embedding, {
+                            meetingId: SHARED_KB_CASE_ID,
+                            limit: limit * 2, // over-fetch for authority reranking
+                            minSimilarity,
+                            spaceKey,
+                        }),
+                        new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+                    ]);
+                } catch (err: any) {
+                    console.warn('[KnowledgeBaseManager] Shared KB search error:', err?.message);
+                }
             }
 
             // Resilience fallback: if primary space returned 0 chunks from shared KB,
@@ -618,7 +638,7 @@ export class KnowledgeBaseManager {
             };
 
             // Score and merge all results with true document title resolution
-            const allChunks: AuthorityScoredChunk[] = [];
+            const allChunks: AuthorityScoredChunk[] = [...cloudSharedChunks];
 
             for (const chunk of [...sharedResults, ...caseResults]) {
                 const chunkText = chunk.text || chunk.cleaned_text || '';
