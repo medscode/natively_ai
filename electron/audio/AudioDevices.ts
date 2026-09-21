@@ -33,7 +33,7 @@ export class AudioDevices {
             return getOutputDevices();
         } catch (e) {
             console.error('[AudioDevices] Failed to get output devices:', e);
-            return [];
+            return []; 
         }
     }
 }
