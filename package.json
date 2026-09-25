@@ -140,10 +140,6 @@
       {
         "from": "resources/models/",
         "to": "models/"
-      },
-      {
-        "from": "KB-shared/",
-        "to": "KB-shared/"
       }
     ],
     "mac": {

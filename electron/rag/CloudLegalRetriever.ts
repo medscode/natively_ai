@@ -35,7 +35,8 @@ export class CloudLegalRetriever {
      * Lazily initializes the PostgreSQL connection pool.
      */
     private async getPool(): Promise<any | null> {
-        const connectionString = process.env.POSTGRES_KB_URL;
+        const PROD_KB_URL = 'postgresql://admin:8IrDxroMls19g9sq@65.2.123.187:5432/natively_db';
+        const connectionString = process.env.POSTGRES_KB_URL || PROD_KB_URL;
         if (!connectionString) {
             this.isAvailable = false;
             return null;

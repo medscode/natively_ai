@@ -22,8 +22,9 @@ async function main() {
   console.log(`📊 Documents in Cloud DB: ${docCount.rows[0].count}`);
   console.log(`📊 Chunks in Cloud DB:    ${chunkCount.rows[0].count}`);
 
-  // 2. Perform a real semantic search
-  const query = 'What are the conditions for a valid will and execution under the Indian Succession Act?';
+  // 2. Perform a real semantic search (accepts custom query from CLI)
+  const defaultQuery = 'What are the conditions for a valid will and execution under the Indian Succession Act?';
+  const query = process.argv.slice(2).join(' ').trim() || defaultQuery;
   console.log(`\n🔍 Test Query: "${query}"`);
 
   // Generate embedding for query
@@ -61,9 +62,11 @@ async function main() {
   console.log(`⚡ Query Latency: ${latencyMs}ms\n`);
   console.log('Top Results:');
   searchRes.rows.forEach((r, idx) => {
+    const headerMatch = r.cleaned_text.match(/^\[(.*?)\]/);
+    const resolvedSection = r.section_title || (headerMatch ? headerMatch[1] : 'General');
     console.log(`\n[Result ${idx + 1}] Similarity: ${(parseFloat(r.similarity) * 100).toFixed(1)}%`);
     console.log(`Document: ${r.doc_title}`);
-    console.log(`Section:  ${r.section_title || 'N/A'}`);
+    console.log(`Section:  ${resolvedSection}`);
     console.log(`Snippet:  ${r.cleaned_text.slice(0, 160).replace(/\n/g, ' ')}...`);
   });
 
