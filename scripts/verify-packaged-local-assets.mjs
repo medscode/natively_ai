@@ -78,7 +78,13 @@ const REQUIRED_WORKER_FILES = [
 
 // Required native binaries for the packaged app (the asarUnpack globs must place
 // them under app.asar.unpacked). Checked in packaged mode only.
-const REQUIRED_UNPACKED_NATIVE = [
+const REQUIRED_UNPACKED_NATIVE = process.platform === 'win32' ? [
+  'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+  'node_modules/keytar/build/Release/keytar.node',
+  'node_modules/onnxruntime-node/bin',
+  'node_modules/sqlite-vec-windows-x64/vec0.dll',
+  'native-module/index.win32-x64-msvc.node',
+] : [
   'node_modules/better-sqlite3/build/Release/better_sqlite3.node',
   'node_modules/keytar/build/Release/keytar.node',
   'node_modules/onnxruntime-node/bin',

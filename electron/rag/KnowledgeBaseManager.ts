@@ -471,7 +471,7 @@ export class KnowledgeBaseManager {
             let embeddingResult = await Promise.race([
                 this.embeddingPipeline.getEmbeddingWithFallback(query),
                 new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
-            ]).catch(() => null);
+            ]).catch((): null => null);
 
             let embedding = embeddingResult?.embedding;
             let spaceKey = embeddingResult?.space || this.embeddingPipeline.getActiveSpaceKey();
@@ -482,7 +482,7 @@ export class KnowledgeBaseManager {
                     const localQueryEmbed = await Promise.race([
                         this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
                         new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
-                    ]).catch(() => null);
+                    ]).catch((): null => null);
                     if (localQueryEmbed && localQueryEmbed.length === 384) {
                         embedding = localQueryEmbed;
                         spaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
@@ -538,7 +538,7 @@ export class KnowledgeBaseManager {
                     const localQueryEmbed = await Promise.race([
                         this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
                         new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
-                    ]).catch(() => null);
+                    ]).catch((): null => null);
                     if (localQueryEmbed && localQueryEmbed.length === 384) {
                         const localSpaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
                         const fallbackSharedResults = await Promise.race([
@@ -582,7 +582,7 @@ export class KnowledgeBaseManager {
                         const localQueryEmbed = await Promise.race([
                             this.embeddingPipeline.getEmbeddingForQueryLocalOnly(query),
                             new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500)),
-                        ]).catch(() => null);
+                        ]).catch((): null => null);
                         if (localQueryEmbed && localQueryEmbed.length === 384) {
                             const localSpaceKey = this.embeddingPipeline.localSpaceKey || 'local:Xenova/all-MiniLM-L6-v2:384';
                             const fallbackCase = await Promise.race([

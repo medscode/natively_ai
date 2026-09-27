@@ -3200,7 +3200,7 @@ export class AppState {
         logger(`${prefix}${decision.message}`);
         return;
       }
-      if (decision.type === 'warn-user' && decision.reason === 'same-device-input-output') {
+      if (process.platform === 'darwin' && decision.type === 'warn-user' && decision.reason === 'same-device-input-output') {
         const msg = formatPermissionMessage('mac-same-device-input-output', { device: decision.device });
         console.warn(`${prefix}SystemAudioCapture ${msg}`);
         this.sendAudioCaptureFailed( {

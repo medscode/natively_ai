@@ -8,25 +8,24 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const SQLITE_VEC_VERSION = '0.1.7-alpha.2';
-
 const packages = [
-  'sqlite-vec-darwin-arm64',
-  'sqlite-vec-darwin-x64',
+  { name: 'sqlite-vec-darwin-arm64', version: '0.1.9' },
+  { name: 'sqlite-vec-darwin-x64', version: '0.1.7-alpha.2' },
+  { name: 'sqlite-vec-windows-x64', version: '0.1.9' },
 ];
 
 for (const pkg of packages) {
-  const pkgDir = path.join(__dirname, '..', 'node_modules', pkg);
+  const pkgDir = path.join(__dirname, '..', 'node_modules', pkg.name);
   if (fs.existsSync(pkgDir)) {
-    console.log(`[ensure-sqlite-vec] ${pkg} already present, skipping.`);
+    console.log(`[ensure-sqlite-vec] ${pkg.name} already present, skipping.`);
     continue;
   }
 
-  console.log(`[ensure-sqlite-vec] ${pkg} missing — fetching...`);
+  console.log(`[ensure-sqlite-vec] ${pkg.name} missing — fetching...`);
   try {
     // Use npm pack to download the tarball, then extract it into node_modules
     const tmpDir = os.tmpdir();
-    const tarball = execSync(`npm pack ${pkg}@${SQLITE_VEC_VERSION} --pack-destination "${tmpDir}"`, {
+    const tarball = execSync(`npm pack ${pkg.name}@${pkg.version} --pack-destination "${tmpDir}"`, {
       cwd: path.join(__dirname, '..'),
       encoding: 'utf-8',
     }).trim();
@@ -36,8 +35,8 @@ for (const pkg of packages) {
     execSync(`tar xzf "${tarPath}" --strip-components=1 -C "${pkgDir}"`, { stdio: 'inherit' });
     fs.unlinkSync(tarPath);
 
-    console.log(`[ensure-sqlite-vec] ${pkg} installed successfully.`);
+    console.log(`[ensure-sqlite-vec] ${pkg.name} installed successfully.`);
   } catch (e) {
-    console.warn(`[ensure-sqlite-vec] Warning: could not install ${pkg}:`, e.message);
+    console.warn(`[ensure-sqlite-vec] Warning: could not install ${pkg.name}:`, e.message);
   }
 }
