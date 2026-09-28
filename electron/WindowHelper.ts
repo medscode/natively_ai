@@ -1242,7 +1242,12 @@ export class WindowHelper {
       {
         label: 'Developer Console',
         click: () => {
-          win.webContents.toggleDevTools();
+          if (win.isDestroyed?.()) return;
+          if (win.webContents.isDevToolsOpened()) {
+            win.webContents.closeDevTools();
+          } else {
+            win.webContents.openDevTools({ mode: 'detach' });
+          }
         },
       },
       { type: 'separator' },

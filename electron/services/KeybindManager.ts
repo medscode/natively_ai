@@ -369,7 +369,34 @@ export class KeybindManager {
                     submenu: [
                         { role: 'reload' },
                         { role: 'forceReload' },
-                        { role: 'toggleDevTools' },
+                        {
+                            label: 'Toggle Developer Tools',
+                            accelerator: 'CommandOrControl+Shift+I',
+                            click: (_item: any, focusedWindow: BrowserWindow | undefined) => {
+                                const target = focusedWindow || BrowserWindow.getFocusedWindow();
+                                if (!target || target.isDestroyed()) return;
+                                if (target.webContents.isDevToolsOpened()) {
+                                    target.webContents.closeDevTools();
+                                } else {
+                                    target.webContents.openDevTools({ mode: 'detach' });
+                                }
+                            }
+                        },
+                        {
+                            label: 'Toggle Developer Tools (F12)',
+                            accelerator: 'F12',
+                            visible: false,
+                            acceleratorWorksWhenHidden: true,
+                            click: (_item: any, focusedWindow: BrowserWindow | undefined) => {
+                                const target = focusedWindow || BrowserWindow.getFocusedWindow();
+                                if (!target || target.isDestroyed()) return;
+                                if (target.webContents.isDevToolsOpened()) {
+                                    target.webContents.closeDevTools();
+                                } else {
+                                    target.webContents.openDevTools({ mode: 'detach' });
+                                }
+                            }
+                        },
                         { type: 'separator' },
                         { role: 'resetZoom' },
                         { role: 'zoomIn' },
@@ -441,7 +468,19 @@ export class KeybindManager {
                     { type: 'separator' },
                     { role: 'reload' },
                     { role: 'forceReload' },
-                    { role: 'toggleDevTools' },
+                    {
+                        label: 'Toggle Developer Tools',
+                        accelerator: 'Alt+Command+I',
+                        click: (_item: any, focusedWindow: BrowserWindow | undefined) => {
+                            const target = focusedWindow || BrowserWindow.getFocusedWindow();
+                            if (!target || target.isDestroyed()) return;
+                            if (target.webContents.isDevToolsOpened()) {
+                                target.webContents.closeDevTools();
+                            } else {
+                                target.webContents.openDevTools({ mode: 'detach' });
+                            }
+                        }
+                    },
                     { type: 'separator' },
                     { role: 'resetZoom' },
                     { role: 'zoomIn' },
