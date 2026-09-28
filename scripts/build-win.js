@@ -70,7 +70,7 @@ async function main() {
     runStep('Verify Pre-packaged Assets', 'node scripts/verify-packaged-local-assets.mjs');
 
     // 7. Package Windows executables (NSIS installer + Portable)
-    runStep('Package Electron Windows Executables (x64)', 'npx electron-builder --win nsis portable --x64');
+    runStep('Package Electron Windows Executables (x64)', 'npx electron-builder --win nsis portable --x64 --publish never');
 
     // 8. Verify generated outputs
     if (fs.existsSync(RELEASE_DIR)) {
