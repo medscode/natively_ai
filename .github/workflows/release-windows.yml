@@ -19,10 +19,8 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,13 +34,18 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Download fallback models and sqlite-vec assets
+        run: |
+          node scripts/download-models.js
+          node scripts/ensure-sqlite-vec.js
+
+      - name: Rebuild native dependencies for Electron
+        run: npx @electron/rebuild -f -w better-sqlite3,keytar
 
       - name: Build Rust native audio module
         run: npm run build:native
-
-      - name: Ensure sqlite-vec native assets
-        run: node scripts/ensure-sqlite-vec.js
 
       - name: Verify packaged local fallback assets
         run: node scripts/verify-packaged-local-assets.mjs

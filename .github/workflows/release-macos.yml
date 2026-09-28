@@ -44,6 +44,7 @@ permissions:
 
 jobs:
   build-macos:
+    if: "!contains(github.ref, '-win')"
     runs-on: macos-14 # Apple Silicon runner; builds both arches via NATIVELY_BUILD_ALL_MAC_ARCHES
     timeout-minutes: 90
     steps:
