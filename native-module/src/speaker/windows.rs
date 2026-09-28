@@ -237,8 +237,9 @@ impl SpeakerInput {
                     }
 
                     // Timeout is normal when no audio is playing — WASAPI loopback
-                    // doesn't fire events during silence. Just continue waiting.
+                    // doesn't fire events during silence. Sleep briefly to prevent 100% CPU busy-loop.
                     if h_event.wait_for_event(3000).is_err() {
+                        thread::sleep(Duration::from_millis(20));
                         continue;
                     }
 
@@ -249,10 +250,12 @@ impl SpeakerInput {
                         render_client.read_from_device_to_deque(bytes_per_frame, &mut temp_queue)
                     {
                         error!("Failed to read audio data: {}", e);
+                        thread::sleep(Duration::from_millis(20));
                         continue;
                     }
 
                     if temp_queue.is_empty() {
+                        thread::sleep(Duration::from_millis(20));
                         continue;
                     }
 

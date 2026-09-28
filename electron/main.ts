@@ -88,30 +88,25 @@ try {
         : 0;
     shouldDisableFontations = darwinMajor >= 25; // Darwin 25 = macOS 26
   }
-  if (shouldDisableFontations) {
-    // NOTE: this is the ONLY disable-features append in the codebase
-    // (verified 2026-07-10). Chromium keeps only the LAST --disable-features
-    // value, so if a second disabled feature is ever added it MUST be combined
-    // into one comma-separated value here rather than a second appendSwitch.
-    //
-    // FEATURE NAMES (verified 2026-07-10 via `strings` on the Electron
-    // 33.4.11 framework binary): the base::Feature names are
-    // "FontationsFontBackend" (the full Rust backend) and
-    // "FontationsForSelectedFormats" (routes selected font formats — incl.
-    // variable fonts, the BridgeNormalizedCoords crash path — through Rust
-    // even when the full backend is off). A bare "Fontations" feature does
-    // NOT exist; Chromium silently ignores unknown names, so passing
-    // 'Fontations' here was a no-op. Both must be disabled together.
-    app.commandLine.appendSwitch(
-      'disable-features',
-      'FontationsFontBackend,FontationsForSelectedFormats'
-    );
-    console.log(
-      '[Fontations] disable-features=FontationsFontBackend,FontationsForSelectedFormats applied ' +
-      `(platform=${process.platform} release=${os.release()} override=${fontationsOverride ?? 'auto'})`
-    );
-  }
-} catch {
+    const disabledFeatures: string[] = [];
+    if (shouldDisableFontations) {
+      disabledFeatures.push('FontationsFontBackend', 'FontationsForSelectedFormats');
+      console.log(
+        '[Fontations] disable-features=FontationsFontBackend,FontationsForSelectedFormats applied ' +
+        `(platform=${process.platform} release=${os.release()} override=${fontationsOverride ?? 'auto'})`
+      );
+    }
+    if (process.platform === 'win32') {
+      // Windows: out-of-process audio service utility process crashes repeatedly
+      // (exitCode -2147483645) when system audio drivers / enhancements violate the sandbox.
+      // Running audio in-process eliminates the crash loop and stops CPU fan thrashing.
+      disabledFeatures.push('AudioServiceOutOfProcess', 'AudioServiceSandbox');
+      console.log('[AudioService] disable-features=AudioServiceOutOfProcess,AudioServiceSandbox applied for Windows');
+    }
+    if (disabledFeatures.length > 0) {
+      app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
+    }
+  } catch {
   // Never let the mitigation itself break boot. Worst case: Fontations stays
   // enabled and the (rare) font crash remains possible — the render-process-gone
   // auto-reload handler recovers it.
@@ -7850,6 +7845,12 @@ if (process.env.THINKING_MATRIX === '1') {
   app.on('child-process-gone', (_event, details) => {
     logCrashConsole('child-process-gone', { details });
     console.warn('[main] child-process-gone:', details);
+    // Utility processes (like audio.mojom.AudioService or network utility) restarting
+    // must NEVER trigger emergency database closure or kill meeting state.
+    if (details?.type === 'Utility' || (details as any)?.serviceName === 'audio.mojom.AudioService') {
+      logToFile(`[main] child-process-gone: ignored non-fatal utility process exit (${details?.serviceName || details?.name || details?.type})`);
+      return;
+    }
     stopAppManagedHindsight('child-process-gone');
     emergencyCloseDatabase('child-process-gone');
   });
