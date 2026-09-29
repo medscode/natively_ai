@@ -14,7 +14,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useStreamBuffer } from '../hooks/useStreamBuffer';
 import {
-    X, Copy, Check, Globe, ArrowUp, BookOpen, Sparkles, Plus,
+    X, Copy, Check, Globe, ArrowUp, ArrowDown, BookOpen, Sparkles, Plus,
     FileText, Link2, UserCog, MoreHorizontal, Pencil, MessageSquare,
     RefreshCw, HelpCircle, Zap, ChevronDown,
 } from 'lucide-react';
@@ -278,19 +278,57 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
         } catch { /* ignore */ }
     }, []);
 
-    // Auto-scroll the suggestion history to the newest entry as cards stream in.
+    // Auto-scroll toggle state (persisted to localStorage and synced with Settings)
+    const [autoScroll, setAutoScroll] = useState<boolean>(() => {
+        const stored = localStorage.getItem('natively_auto_scroll');
+        return stored !== 'false';
+    });
+
     useEffect(() => {
+        const handleStorage = () => {
+            const stored = localStorage.getItem('natively_auto_scroll');
+            setAutoScroll(stored !== 'false');
+        };
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+    }, []);
+
+    const toggleAutoScroll = () => {
+        const next = !autoScroll;
+        setAutoScroll(next);
+        localStorage.setItem('natively_auto_scroll', String(next));
+        window.dispatchEvent(new Event('storage'));
+        if (next) {
+            setTimeout(() => {
+                if (messages.length > 0) {
+                    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                } else if (proactiveSuggestions.length > 0) {
+                    suggestionsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }
+            }, 60);
+        }
+    };
+
+    // Auto-scroll the suggestion history to the newest entry as cards stream in (only when autoScroll is enabled).
+    useEffect(() => {
+        if (!autoScroll) return;
         if (proactiveSuggestions.length === 0) return;
         const t = setTimeout(() => {
             suggestionsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
         }, 60);
         return () => clearTimeout(t);
-    }, [proactiveSuggestions.length, proactiveSuggestions[proactiveSuggestions.length - 1]?.suggestion]);
+    }, [autoScroll, proactiveSuggestions.length, proactiveSuggestions[proactiveSuggestions.length - 1]?.suggestion]);
 
-    // Mode-switch flush: when the user toggles Manual → Suggest, promote the
-    // stashed pending suggestion (if any) into the visible bubble list so it
-    // doesn't get orphaned. Suggest → Manual clears the visible list of any
-    // auto-streamed bubbles (they stay in the DB either way).
+    // Auto-scroll chat messages when new messages or streaming chunks arrive (only when autoScroll is enabled).
+    useEffect(() => {
+        if (!autoScroll) return;
+        if (messages.length === 0) return;
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [autoScroll, messages]);
+
+    // Mode-switch: preserve all visible suggestion history when toggling modes.
+    // Switching to Manual stops new proactive suggestions from arriving without wiping
+    // past suggestions. Switching to Suggest resumes streaming right from there.
     useEffect(() => {
         if (mode === 'suggest' && pendingSuggestion) {
             const revealed = pendingSuggestion;
@@ -301,7 +339,6 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                 return next;
             });
         } else if (mode === 'manual') {
-            setProactiveSuggestions([]);
             setStreamingId(null);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -865,7 +902,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                 </div>
                             )}
                             {/* Proactive Suggestion History */}
-                            <div ref={suggestionsEndRef} className="mb-3 space-y-2.5">
+                            <div className="mb-3 space-y-2.5">
                                 <AnimatePresence initial={false}>
                                     {proactiveSuggestions.map((s) => {
                                         const hasText = s.suggestion && s.suggestion.length > 0;
@@ -977,6 +1014,7 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                         );
                                     })}
                                 </AnimatePresence>
+                                <div ref={suggestionsEndRef} />
                             </div>
                             {messages.map((msg) => (
                                 msg.role === 'user'
@@ -1089,6 +1127,25 @@ const MeetingChatPanel: React.FC<MeetingChatPanelProps> = ({
                                     >
                                         <span className={`w-1.5 h-1.5 rounded-full ${liveTranscriptEnabled ? (liveDot ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500/70') : 'bg-white/30'}`} />
                                         <span>Live</span>
+                                    </button>
+
+                                    {/* Auto-scroll toggle — freezes scroll position so lawyers can read without suggestions yanking the viewport */}
+                                    <button
+                                        type="button"
+                                        onClick={toggleAutoScroll}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all ${
+                                            autoScroll
+                                                ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 hover:bg-purple-500/30'
+                                                : 'border-white/15 bg-white/5 text-white/40 hover:text-white/70 hover:bg-white/10'
+                                        }`}
+                                        title={
+                                            autoScroll
+                                                ? 'Auto-scroll: ON (automatically follows new suggestions & responses). Click to freeze scroll.'
+                                                : 'Auto-scroll: PAUSED (scroll is frozen so you can read previous suggestions without jumping). Click to resume auto-scroll.'
+                                        }
+                                    >
+                                        <ArrowDown size={11} className={autoScroll ? 'text-purple-300' : 'text-white/40'} />
+                                        <span>{autoScroll ? 'Auto-scroll' : 'Scroll paused'}</span>
                                     </button>
                                 </div>
 

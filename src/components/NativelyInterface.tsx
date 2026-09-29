@@ -641,7 +641,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
   });
   const [autoScroll, setAutoScroll] = useState(() => {
     const stored = localStorage.getItem('natively_auto_scroll');
-    return stored === 'true';
+    return stored !== 'false';
   });
 
   // Analytics State
@@ -860,7 +860,7 @@ const NativelyInterface: React.FC<NativelyInterfaceProps> = ({
   useEffect(() => {
     const handleStorage = () => {
       const stored = localStorage.getItem('natively_auto_scroll');
-      setAutoScroll(stored === 'true');
+      setAutoScroll(stored !== 'false');
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
